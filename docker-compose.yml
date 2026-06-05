@@ -1,0 +1,13 @@
+services:
+  jelly-ide:
+    container_name: jelly-ide
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - /mnt/media/music:/mnt/media/music
+    environment:
+      - DOWNLOAD_DIR=/mnt/media/music
+      - CONCURRENT_DOWNLOAD=2
+      - PORT=8080
+    restart: unless-stopped
