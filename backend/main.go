@@ -18,7 +18,7 @@ import (
 	"github.com/rs/cors"
 )
 
-	func main() {
+func main() {
 	// Initialize config
 	downloadDir := getEnv("DOWNLOAD_DIR", "/mnt/media/music")
 	dbPath := filepath.Join(downloadDir, "jellyide.db")
@@ -32,40 +32,41 @@ import (
 	defer database.Close()
 
 	// Initialize Services
-	jobManager := jobs.NewManager(database)
 	libService := library.NewService(database, downloadDir)
+	jobManager := jobs.NewManager(database)
+	musicScanner := scanner.NewScanner(libService, jobManager, downloadDir)
+	downloader := download.NewDownloader(jobManager, musicScanner, downloadDir)
 	metaService := metadata.NewService(database, libService)
-	scanService := scanner.NewScanner(libService, jobManager, downloadDir)
-	downloader := download.NewDownloader(jobManager, downloadDir, scanService)
 
-	// Trigger initial scan
-	scanService.Scan()
-
-	// API Router
-	router := api.NewRouter(downloader, libService, metaService, jobManager, scanService)
-
-	// Setup Server
+	// Main Router
 	r := mux.NewRouter()
-	r.PathPrefix("/api/").Handler(http.StripPrefix("/api", router))
 
-	// Serve Static Files with SPA Fallback
-	staticDir := "./frontend/build/"
+	// API Router (Using Subrouter natively)
+	apiSub := r.PathPrefix("/api").Subrouter()
+	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner)
+	
+	// Serve media files
+	r.PathPrefix("/media/").Handler(http.StripPrefix("/media", http.FileServer(http.Dir(downloadDir))))
+
+	// SPA Handler for Frontend
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := filepath.Join(staticDir, r.URL.Path)
-
-		// Check if file exists
-		_, err := os.Stat(path)
-		if os.IsNotExist(err) || r.URL.Path == "/" {
-			// Serve index.html for SPA routes
-			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
+		path := r.URL.Path
+		fullPath := filepath.Join("./frontend/build", path)
+		
+		// If path is "/" or file doesn't exist, serve index.html
+		if path == "/" {
+			http.ServeFile(w, r, "./frontend/build/index.html")
 			return
-		} else if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+
+		info, err := os.Stat(fullPath)
+		if os.IsNotExist(err) || info.IsDir() {
+			http.ServeFile(w, r, "./frontend/build/index.html")
 			return
 		}
 
 		// Otherwise serve the static file
-		http.FileServer(http.Dir(staticDir)).ServeHTTP(w, r)
+		http.FileServer(http.Dir("./frontend/build")).ServeHTTP(w, r)
 	})
 
 	c := cors.New(cors.Options{
@@ -76,6 +77,7 @@ import (
 	port := getEnv("PORT", "8080")
 	log.Printf("JellyIDE Server starting on :%s", port)
 	log.Printf("DB Path: %s", dbPath)
+	log.Printf("Media Dir: %s", downloadDir)
 	log.Fatal(http.ListenAndServe(":"+port, c.Handler(r)))
 }
 

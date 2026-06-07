@@ -2,7 +2,6 @@ package download
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,33 +33,25 @@ type Downloader struct {
 	ytDlpPath       string
 }
 
-func NewDownloader(jobManager *jobs.Manager, downloadDir string, scanner *scanner.Scanner) *Downloader {
+func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir string) *Downloader {
 	d := &Downloader{
 		jobManager:      jobManager,
-		scanner:         scanner,
+		scanner:         s,
 		downloadDir:     downloadDir,
-		queue:           make(chan string, 1000),
+		queue:           make(chan string, 5000), // Increased buffer
 		concurrentLimit: 2,
 		ytDlpPath:       "yt-dlp",
 	}
 	d.cond = sync.NewCond(&d.mu)
-
+	
 	// Recover queued jobs from DB on startup
 	allJobs, err := jobManager.GetAllJobs()
-	if err != nil {
-		log.Printf("Failed to recover jobs: %v", err)
-	} else {
-		count := 0
+	if err == nil {
 		for _, j := range allJobs {
 			if j.Type == jobs.TypeDownload && (j.Status == jobs.StatusQueued || j.Status == jobs.StatusDownloading) {
-				// Re-queue
 				jobManager.UpdateJobStatus(j.ID, jobs.StatusQueued, "0%", "")
 				d.queue <- j.ID
-				count++
 			}
-		}
-		if count > 0 {
-			log.Printf("Recovered %d pending download jobs from DB", count)
 		}
 	}
 
@@ -69,31 +60,33 @@ func NewDownloader(jobManager *jobs.Manager, downloadDir string, scanner *scanne
 }
 
 func (d *Downloader) QueueDownload(details DownloadDetails) (*jobs.Job, error) {
-	job, err := d.jobManager.CreateJob(jobs.TypeDownload, details)
-	if err != nil {
+	created, err := d.BulkQueueDownloads([]DownloadDetails{details})
+	if err != nil || len(created) == 0 {
 		return nil, err
 	}
-	d.queue <- job.ID
-	return job, nil
+	return created[0], nil
 }
 
-func (d *Downloader) BulkQueueDownloads(detailsList []DownloadDetails) ([]string, error) {
-	var interfaces []interface{}
-	for _, d := range detailsList {
-		interfaces = append(interfaces, d)
+func (d *Downloader) BulkQueueDownloads(detailsList []DownloadDetails) ([]*jobs.Job, error) {
+	// Convert details to interface list for BulkCreateJobs
+	interfaces := make([]interface{}, len(detailsList))
+	for i, d := range detailsList {
+		interfaces[i] = d
 	}
 
-	createdJobs, err := d.jobManager.BulkCreateJobs(jobs.TypeDownload, interfaces)
+	created, err := d.jobManager.BulkCreateJobs(jobs.TypeDownload, interfaces)
 	if err != nil {
 		return nil, err
 	}
 
-	var jobIDs []string
-	for _, job := range createdJobs {
-		jobIDs = append(jobIDs, job.ID)
-		d.queue <- job.ID
-	}
-	return jobIDs, nil
+	// Push to queue in background so we don't block the caller if channel is slow
+	go func() {
+		for _, j := range created {
+			d.queue <- j.ID
+		}
+	}()
+
+	return created, nil
 }
 
 func (d *Downloader) SetLimit(limit int) {
@@ -122,9 +115,7 @@ func (d *Downloader) GetProxy() string {
 }
 
 func (d *Downloader) dispatcher() {
-	log.Printf("Downloader dispatcher started")
 	for jobID := range d.queue {
-		log.Printf("Dispatcher picked up job: %s", jobID)
 		d.mu.Lock()
 		for d.activeDownloads >= d.concurrentLimit {
 			d.cond.Wait()
@@ -138,7 +129,6 @@ func (d *Downloader) dispatcher() {
 				d.activeDownloads--
 				d.cond.Broadcast()
 				d.mu.Unlock()
-				log.Printf("Dispatcher released slot for job: %s", id)
 			}()
 			d.processDownload(id)
 		}(jobID)
@@ -146,23 +136,19 @@ func (d *Downloader) dispatcher() {
 }
 
 func (d *Downloader) processDownload(jobID string) {
-	log.Printf("Processing job: %s", jobID)
 	job, err := d.jobManager.GetJob(jobID)
 	if err != nil || job == nil {
-		log.Printf("Job not found: %s", jobID)
+		return
+	}
+
+	// Double check status - might have been canceled or already finished
+	if job.Status == jobs.StatusCompleted || job.Status == jobs.StatusFailed {
 		return
 	}
 
 	d.jobManager.UpdateJobStatus(jobID, jobs.StatusDownloading, "0%", "")
 
 	var details DownloadDetails
-	// We need to parse details from job.Details JSON
-	// For simplicity, we just use a helper function to decode
-	// Assuming details is JSON string
-
-	// We will unmarshal properly, since we marshal in jobs package
-	// details field is a JSON string
-
 	err = d.parseDetails(job.Details, &details)
 	if err != nil {
 		d.jobManager.UpdateJobStatus(jobID, jobs.StatusFailed, "", "Invalid job details")
@@ -212,10 +198,11 @@ func (d *Downloader) processDownload(jobID string) {
 	} else {
 		d.jobManager.UpdateJobStatus(jobID, jobs.StatusCompleted, "100%", "")
 		
-		// Automatically index the newly downloaded file
+		// Auto-index
 		downloadedFile := strings.Replace(outTemplate, "%(ext)s", "flac", 1)
-		log.Printf("Downloader: Auto-indexing %s", downloadedFile)
-		d.scanner.IndexFile(downloadedFile)
+		if d.scanner != nil {
+			d.scanner.IndexFile(downloadedFile)
+		}
 	}
 }
 

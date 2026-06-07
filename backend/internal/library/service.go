@@ -6,28 +6,27 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
+	"sync"
+	"github.com/google/uuid"
 	"yt-scraper/internal/db"
 )
 
 type Artist struct {
-	ID         int    `json:"id" db:"id"`
-	Name       string `json:"name" db:"name"`
-	AlbumCount int    `json:"album_count" db:"album_count"`
+	ID   string `json:"id" db:"id"`
+	Name string `json:"name" db:"name"`
 }
 
 type Album struct {
-	ID         int    `json:"id" db:"id"`
-	ArtistID   int    `json:"artist_id" db:"artist_id"`
-	Title      string `json:"title" db:"title"`
-	CoverArt   string `json:"cover_art" db:"cover_art"`
-	Artist     string `json:"artist" db:"artist_name"` // For convenience
-	TrackCount int    `json:"track_count" db:"track_count"`
+	ID       string `json:"id" db:"id"`
+	ArtistID string `json:"artist_id" db:"artist_id"`
+	Title    string `json:"title" db:"title"`
+	CoverArt string `json:"cover_art" db:"cover_art"`
+	Artist   string `json:"artist" db:"artist_name"` 
 }
 
 type Track struct {
-	ID       int    `json:"id" db:"id"`
-	AlbumID  int    `json:"album_id" db:"album_id"`
+	ID       string `json:"id" db:"id"`
+	AlbumID  string `json:"album_id" db:"album_id"`
 	Title    string `json:"title" db:"title"`
 	Path     string `json:"path" db:"path"`
 	Duration int    `json:"duration" db:"duration"`
@@ -37,6 +36,7 @@ type Track struct {
 type Service struct {
 	db          *db.DB
 	downloadDir string
+	mu          sync.Mutex
 }
 
 func NewService(db *db.DB, downloadDir string) *Service {
@@ -44,220 +44,204 @@ func NewService(db *db.DB, downloadDir string) *Service {
 }
 
 func (s *Service) GetArtists() ([]Artist, error) {
-	var artists []Artist
-	query := `
-		SELECT a.id, a.name, COUNT(al.id) as album_count 
-		FROM artists a 
-		LEFT JOIN albums al ON a.id = al.artist_id 
-		GROUP BY a.id 
-		ORDER BY a.name ASC
-	`
-	err := s.db.Select(&artists, query)
+	artists := []Artist{}
+	err := s.db.Select(&artists, "SELECT * FROM artists ORDER BY name ASC")
+	if err != nil {
+		log.Printf("Library: GetArtists error: %v", err)
+	}
 	return artists, err
 }
 
-func (s *Service) GetAlbumsByArtist(artistID int) ([]Album, error) {
-	var albums []Album
+func (s *Service) GetAlbumsByArtist(artistID string) ([]Album, error) {
+	artistID = strings.TrimSpace(artistID)
+	albums := []Album{}
 	query := `
-		SELECT a.id, a.artist_id, a.title, COALESCE(a.cover_art, '') as cover_art, COALESCE(ar.name, '') as artist_name, COUNT(t.id) as track_count
+		SELECT a.id, a.artist_id, a.title, COALESCE(a.cover_art, '') as cover_art, ar.name as artist_name
 		FROM albums a
 		JOIN artists ar ON a.artist_id = ar.id
-		LEFT JOIN tracks t ON a.id = t.album_id
 		WHERE a.artist_id = ?
-		GROUP BY a.id
 		ORDER BY a.title ASC
 	`
 	err := s.db.Select(&albums, query, artistID)
-	return albums, err
+	if err != nil {
+		log.Printf("Library: GetAlbumsByArtist error: %v", err)
+		return albums, err
+	}
+	return albums, nil
 }
 
-func (s *Service) GetFirstTrackPath(albumID int) (string, error) {
-	var path string
-	err := s.db.Get(&path, "SELECT path FROM tracks WHERE album_id = ? LIMIT 1", albumID)
-	return path, err
-}
-
-func (s *Service) GetTracksByAlbum(albumID int) ([]Track, error) {
-	var tracks []Track
+func (s *Service) GetTracksByAlbum(albumID string) ([]Track, error) {
+	tracks := []Track{}
 	err := s.db.Select(&tracks, "SELECT * FROM tracks WHERE album_id = ? ORDER BY title ASC", albumID)
+	if err != nil {
+		log.Printf("Library: GetTracksByAlbum error: %v", err)
+	}
 	return tracks, err
 }
 
-// EnsureArtist creates or gets an artist
-func (s *Service) EnsureArtist(name string) (int, error) {
-	var id int
+func (s *Service) EnsureArtist(name string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	name = strings.TrimSpace(name)
+	var id string
 	err := s.db.Get(&id, "SELECT id FROM artists WHERE name = ?", name)
 	if err == nil {
 		return id, nil
 	}
-	res, err := s.db.Exec("INSERT INTO artists (name) VALUES (?)", name)
+	
+	id = uuid.New().String()
+	_, err = s.db.Exec("INSERT INTO artists (id, name) VALUES (?, ?)", id, name)
 	if err != nil {
-		return 0, err
+		err2 := s.db.Get(&id, "SELECT id FROM artists WHERE name = ?", name)
+		if err2 == nil {
+			return id, nil
+		}
+		return "", err
 	}
-	insertId, _ := res.LastInsertId()
-	return int(insertId), nil
+	return id, nil
 }
 
-// EnsureAlbum creates or gets an album
-func (s *Service) EnsureAlbum(artistID int, title string) (int, error) {
-	var id int
+func (s *Service) EnsureAlbum(artistID string, title string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	title = strings.TrimSpace(title)
+	var id string
 	err := s.db.Get(&id, "SELECT id FROM albums WHERE artist_id = ? AND title = ?", artistID, title)
 	if err == nil {
 		return id, nil
 	}
-	res, err := s.db.Exec("INSERT INTO albums (artist_id, title) VALUES (?, ?)", artistID, title)
+	
+	id = uuid.New().String()
+	_, err = s.db.Exec("INSERT INTO albums (id, artist_id, title) VALUES (?, ?, ?)", id, artistID, title)
 	if err != nil {
-		return 0, err
+		err2 := s.db.Get(&id, "SELECT id FROM albums WHERE artist_id = ? AND title = ?", artistID, title)
+		if err2 == nil {
+			return id, nil
+		}
+		return "", err
 	}
-	insertId, _ := res.LastInsertId()
-	return int(insertId), nil
+	return id, nil
 }
 
-// UpsertTrack inserts or updates a track
-func (s *Service) UpsertTrack(albumID int, title, path string, duration, bitrate int) error {
-	_, err := s.db.Exec(`
-		INSERT INTO tracks (album_id, title, path, duration, bitrate)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(path) DO UPDATE SET
-			title=excluded.title,
-			duration=excluded.duration,
-			bitrate=excluded.bitrate
-	`, albumID, title, path, duration, bitrate)
-	return err
-}
-
-func (s *Service) GetAlbum(albumID int) (*Album, error) {
-	var album Album
-	query := `
-		SELECT a.id, a.artist_id, a.title, COALESCE(a.cover_art, '') as cover_art, COALESCE(ar.name, '') as artist_name, COUNT(t.id) as track_count
-		FROM albums a
-		JOIN artists ar ON a.artist_id = ar.id
-		LEFT JOIN tracks t ON a.id = t.album_id
-		WHERE a.id = ?
-		GROUP BY a.id
-	`
-	err := s.db.Get(&album, query, albumID)
-	return &album, err
-}
-
-func (s *Service) DeleteTrack(trackID int) error {
-	// Get path first to delete file
-	var path string
-	err := s.db.Get(&path, "SELECT path FROM tracks WHERE id = ?", trackID)
-	if err != nil {
-		return err
-	}
-
-	// Delete from DB
-	_, err = s.db.Exec("DELETE FROM tracks WHERE id = ?", trackID)
-	if err != nil {
-		return err
-	}
-
-	// Try to delete physical file
-	_ = os.Remove(path)
-	return nil
-}
-
-func (s *Service) DeleteAlbum(albumID int) error {
-	// 1. Get album details to find path
+func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 	album, err := s.GetAlbum(albumID)
 	if err != nil {
 		return err
 	}
 
-	albumDir := filepath.Join(s.downloadDir, Sanitize(album.Artist), Sanitize(album.Title))
-
-	// 2. Delete all tracks for this album from DB
-	_, err = s.db.Exec("DELETE FROM tracks WHERE album_id = ?", albumID)
+	tracks, err := s.GetTracksByAlbum(albumID)
 	if err != nil {
 		return err
 	}
 
-	// 3. Delete album from DB
-	_, err = s.db.Exec("DELETE FROM albums WHERE id = ?", albumID)
-	if err != nil {
-		return err
-	}
+	if len(tracks) > 0 {
+		oldPath := filepath.Dir(tracks[0].Path)
+		newPath := filepath.Join(filepath.Dir(oldPath), sanitizeFilename(newTitle))
 
-	// 4. Delete physical directory
-	_ = os.RemoveAll(albumDir)
+		if oldPath != newPath {
+			if err := os.Rename(oldPath, newPath); err != nil {
+				log.Printf("Library: Failed to rename directory from %s to %s: %v", oldPath, newPath, err)
+				return err
+			}
 
-	return nil
-}
+			for i := range tracks {
+				rel, _ := filepath.Rel(oldPath, tracks[i].Path)
+				tracks[i].Path = filepath.Join(newPath, rel)
+				s.db.Exec("UPDATE tracks SET path = ? WHERE id = ?", tracks[i].Path, tracks[i].ID)
+			}
+			
+			if album.CoverArt != "" && strings.HasPrefix(album.CoverArt, "/media/") {
+				oldFolder := filepath.Base(oldPath)
+				newFolder := filepath.Base(newPath)
+				newCover := strings.Replace(album.CoverArt, "/"+oldFolder+"/", "/"+newFolder+"/", 1)
+				s.db.Exec("UPDATE albums SET cover_art = ? WHERE id = ?", newCover, albumID)
+			}
+		}
 
-func (s *Service) UpdateAlbumTitle(albumID int, newTitle string) error {
-	// 1. Get current details
-	album, err := s.GetAlbum(albumID)
-	if err != nil {
-		return err
-	}
-
-	if album.Title == newTitle {
-		return nil
-	}
-
-	var tracks []Track
-	err = s.db.Select(&tracks, "SELECT * FROM tracks WHERE album_id = ?", albumID)
-	if err != nil || len(tracks) == 0 {
-		// Just update title in DB if no tracks
-		_, err = s.db.Exec("UPDATE albums SET title = ? WHERE id = ?", newTitle, albumID)
-		return err
-	}
-
-	// Use the directory of the first track as the definitive oldPath
-	oldPath := filepath.Dir(tracks[0].Path)
-	newAlbumDir := Sanitize(newTitle)
-	newPath := filepath.Join(filepath.Dir(oldPath), newAlbumDir)
-
-	// 2. Rename directory on disk
-	if _, err := os.Stat(oldPath); err == nil && oldPath != newPath {
-		err = os.Rename(oldPath, newPath)
-		if err != nil {
-			log.Printf("Failed to rename directory from %s to %s: %v", oldPath, newPath, err)
-			return err
+		// Use the more robust Python script with mutagen
+		for _, t := range tracks {
+			cmd := exec.Command("python3", "update_metadata.py", t.Path, "--album", newTitle)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				log.Printf("Library: Failed to update album tag for %s: %v. Output: %s", t.Path, err, string(out))
+			}
 		}
 	}
 
-	// 3. Update database
+	_, err = s.db.Exec("UPDATE albums SET title = ? WHERE id = ?", newTitle, albumID)
+	return err
+}
+
+func (s *Service) DeleteAlbum(albumID string) error {
 	tx, err := s.db.Beginx()
 	if err != nil {
 		return err
 	}
-
-	// Update album title
-	_, err = tx.Exec("UPDATE albums SET title = ? WHERE id = ?", newTitle, albumID)
+	_, err = tx.Exec("DELETE FROM tracks WHERE album_id = ?", albumID)
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
-
-	for _, track := range tracks {
-		// New path = replace old folder part with new folder part
-		rel, err := filepath.Rel(oldPath, track.Path)
-		if err != nil {
-			log.Printf("Rel path error: %v (oldPath: %s, trackPath: %s)", err, oldPath, track.Path)
-			continue
-		}
-		newTrackPath := filepath.Join(newPath, rel)
-
-		_, err = tx.Exec("UPDATE tracks SET path = ? WHERE id = ?", newTrackPath, track.ID)
-		if err != nil {
-			tx.Rollback()
-			return err
-		}
-
-		// 4. Update physical metadata tags
-		cmd := exec.Command("python3", "update_metadata.py", newTrackPath, "--album", newTitle)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			log.Printf("Failed to update album tag for %s: %v, output: %s", newTrackPath, err, string(out))
-		}
+	_, err = tx.Exec("DELETE FROM albums WHERE id = ?", albumID)
+	if err != nil {
+		tx.Rollback()
+		return err
 	}
-
 	return tx.Commit()
 }
 
-func Sanitize(s string) string {
+func (s *Service) DeleteTrack(trackID string) error {
+	_, err := s.db.Exec("DELETE FROM tracks WHERE id = ?", trackID)
+	return err
+}
+
+func (s *Service) SetAlbumCover(albumID string, coverPath string) error {
+	_, err := s.db.Exec("UPDATE albums SET cover_art = ? WHERE id = ?", coverPath, albumID)
+	return err
+}
+
+func (s *Service) UpsertTrack(albumID string, title, path string, duration, bitrate int) error {
+	var id string
+	err := s.db.Get(&id, "SELECT id FROM tracks WHERE path = ?", path)
+	if err == nil {
+		_, err = s.db.Exec(`
+			UPDATE tracks SET title = ?, album_id = ?, duration = ?, bitrate = ?
+			WHERE id = ?
+		`, title, albumID, duration, bitrate, id)
+		return err
+	}
+
+	id = uuid.New().String()
+	_, err = s.db.Exec(`
+		INSERT INTO tracks (id, album_id, title, path, duration, bitrate)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, id, albumID, title, path, duration, bitrate)
+	return err
+}
+
+func (s *Service) GetAlbum(albumID string) (*Album, error) {
+	var a Album
+	query := `
+		SELECT a.id, a.artist_id, a.title, COALESCE(a.cover_art, '') as cover_art, ar.name as artist_name
+		FROM albums a
+		JOIN artists ar ON a.artist_id = ar.id
+		WHERE a.id = ?
+	`
+	err := s.db.Get(&a, query, albumID)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func (s *Service) GetTrack(trackID string) (*Track, error) {
+	var track Track
+	err := s.db.Get(&track, "SELECT * FROM tracks WHERE id = ?", trackID)
+	return &track, err
+}
+
+func sanitizeFilename(s string) string {
 	replacer := strings.NewReplacer(
 		"/", "-", "\\", "-", ":", "-", "*", "-",
 		"?", "-", "\"", "-", "<", "-", ">", "-", "|", "-",

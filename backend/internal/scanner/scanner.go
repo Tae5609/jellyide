@@ -47,7 +47,7 @@ func (s *Scanner) Scan() error {
 		count := 0
 		err := filepath.Walk(s.basePath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				return nil // Skip errors
+				return nil
 			}
 			if info.IsDir() {
 				return nil
@@ -97,32 +97,26 @@ func (s *Scanner) processFile(path string) {
 	artist := tags["artist"]
 	album := tags["album"]
 
-	// Fallback to filename if tags are missing
 	if title == "" {
 		title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
+	
+	rel, _ := filepath.Rel(s.basePath, path)
+	parts := strings.Split(rel, string(os.PathSeparator))
+
 	if artist == "" {
-		// Try to get artist from directory structure: basePath/Artist/Album/Track
-		rel, err := filepath.Rel(s.basePath, path)
-		if err == nil {
-			parts := strings.Split(rel, string(os.PathSeparator))
-			if len(parts) >= 2 {
-				artist = parts[0]
-			}
-		}
-		if artist == "" {
+		if len(parts) >= 2 {
+			artist = parts[0]
+		} else {
 			artist = "Unknown Artist"
 		}
 	}
 	if album == "" {
-		rel, err := filepath.Rel(s.basePath, path)
-		if err == nil {
-			parts := strings.Split(rel, string(os.PathSeparator))
-			if len(parts) >= 2 {
-				album = parts[1]
-			}
-		}
-		if album == "" {
+		if len(parts) >= 3 {
+			album = parts[1]
+		} else if len(parts) == 2 {
+			album = parts[0]
+		} else {
 			album = "Unknown Album"
 		}
 	}
@@ -132,18 +126,46 @@ func (s *Scanner) processFile(path string) {
 
 	artistID, err := s.lib.EnsureArtist(artist)
 	if err != nil {
-		log.Printf("Error ensuring artist %s: %v", artist, err)
 		return
 	}
 
 	albumID, err := s.lib.EnsureAlbum(artistID, album)
 	if err != nil {
-		log.Printf("Error ensuring album %s: %v", album, err)
 		return
 	}
+
+	s.detectCover(albumID, filepath.Dir(path))
 
 	err = s.lib.UpsertTrack(albumID, title, path, int(duration), bitrate)
 	if err != nil {
 		log.Printf("Error upserting track %s: %v", title, err)
+	}
+}
+
+func (s *Scanner) detectCover(albumID string, dir string) {
+	coverNames := []string{"cover.jpg", "cover.png", "folder.jpg", "front.jpg", "album.jpg"}
+	
+	for _, name := range coverNames {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			rel, _ := filepath.Rel(s.basePath, path)
+			s.lib.SetAlbumCover(albumID, "/media/"+filepath.ToSlash(rel))
+			return
+		}
+	}
+
+	files, err := os.ReadDir(dir)
+	if err == nil {
+		for _, f := range files {
+			if !f.IsDir() {
+				ext := strings.ToLower(filepath.Ext(f.Name()))
+				if ext == ".jpg" || ext == ".jpeg" || ext == ".png" {
+					path := filepath.Join(dir, f.Name())
+					rel, _ := filepath.Rel(s.basePath, path)
+					s.lib.SetAlbumCover(albumID, "/media/"+filepath.ToSlash(rel))
+					return
+				}
+			}
+		}
 	}
 }

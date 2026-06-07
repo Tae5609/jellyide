@@ -16,6 +16,13 @@ export default function Downloads() {
   const [bulkArtist, setBulkArtist] = useState('');
   const [bulkAlbum, setBulkAlbum] = useState('');
 
+  const formatDuration = (seconds) => {
+    if (!seconds) return '--:--';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   const fetchPlaylist = async () => {
     if (!url) return;
     setLoading(true);
@@ -177,7 +184,8 @@ export default function Downloads() {
                     }}
                   />
                 </th>
-                <th>Track</th>
+                <th>Track Name</th>
+                <th style={{ width: 100, textAlign: 'center' }}>Duration</th>
                 <th>Artist (Target Folder)</th>
                 <th>Album (Target Subfolder)</th>
               </tr>
@@ -193,14 +201,10 @@ export default function Downloads() {
                     />
                   </td>
                   <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      {item.thumbnail ? (
-                        <img src={item.thumbnail} alt="" style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'cover' }} />
-                      ) : (
-                        <div style={{ width: 40, height: 40, borderRadius: 6, backgroundColor: 'var(--bg-hover)' }}></div>
-                      )}
-                      <span style={{ fontSize: 14, fontWeight: 500 }}>{item.title}</span>
-                    </div>
+                    <span style={{ fontSize: 14, fontWeight: 500 }}>{item.title}</span>
+                  </td>
+                  <td style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                    {formatDuration(item.duration)}
                   </td>
                   <td>
                     <input 

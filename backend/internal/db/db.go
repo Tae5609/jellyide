@@ -1,92 +1,243 @@
+// package db
+
+// import (
+// 	"log"
+
+// 	"github.com/jmoiron/sqlx"
+// 	_ "modernc.org/sqlite"
+// )
+
+// type DB struct {
+// 	*sqlx.DB
+// }
+
+// func NewDB(dbPath string) (*DB, error) {
+// 	db, err := sqlx.Connect("sqlite", dbPath)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	if err := migrate(db); err != nil {
+// 		return nil, err
+// 	}
+
+// 	return &DB{db}, nil
+// }
+
+// func migrate(db *sqlx.DB) error {
+// 	schema := `
+// 	CREATE TABLE IF NOT EXISTS artists (
+// 		id TEXT PRIMARY KEY,
+// 		name TEXT UNIQUE NOT NULL
+// 	);
+
+// 	CREATE TABLE IF NOT EXISTS albums (
+// 		id TEXT PRIMARY KEY,
+// 		artist_id TEXT NOT NULL,
+// 		title TEXT NOT NULL,
+// 		cover_art TEXT,
+// 		UNIQUE(artist_id, title),
+// 		FOREIGN KEY(artist_id) REFERENCES artists(id)
+// 	);
+
+// 	CREATE TABLE IF NOT EXISTS tracks (
+// 		id TEXT PRIMARY KEY,
+// 		album_id TEXT NOT NULL,
+// 		title TEXT NOT NULL,
+// 		path TEXT UNIQUE NOT NULL,
+// 		duration INTEGER DEFAULT 0,
+// 		bitrate INTEGER DEFAULT 0,
+// 		FOREIGN KEY(album_id) REFERENCES albums(id)
+// 	);
+
+// 	CREATE TABLE IF NOT EXISTS jobs (
+// 		id TEXT PRIMARY KEY,
+// 		type TEXT NOT NULL,
+// 		status TEXT NOT NULL,
+// 		details TEXT,
+// 		progress TEXT,
+// 		error TEXT,
+// 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+// 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+// 	);
+
+// 	CREATE TABLE IF NOT EXISTS metadata_changes (
+// 		id TEXT PRIMARY KEY,
+// 		track_id TEXT NOT NULL,
+// 		field TEXT NOT NULL,
+// 		old_value TEXT,
+// 		new_value TEXT,
+// 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+// 		FOREIGN KEY(track_id) REFERENCES tracks(id)
+// 	);
+// 	`
+// 	_, err := db.Exec(schema)
+// 	if err != nil {
+// 		log.Printf("Migration error: %v", err)
+// 	}
+// 	return err
+// }
+
 package db
 
 import (
+	"database/sql"
+	"fmt"
 	"log"
 
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
 
+// DB embeds the read pool as *sqlx.DB so all existing call sites
+// (s.db.Get, s.db.Select, s.db.QueryRowx, etc.) keep working unchanged.
+//
+// Writes and transactions are intercepted and routed to a dedicated
+// single-connection write pool, preventing SQLITE_BUSY under concurrent
+// load without requiring any changes to callers.
 type DB struct {
-	*sqlx.DB
+	*sqlx.DB       // read pool — embedded for full backward compatibility
+	write *sqlx.DB // single write connection, serializes all mutations
+}
+
+// Beginx overrides sqlx.DB.Beginx to always start transactions on the
+// write connection. Callers do s.db.Beginx() unchanged.
+func (d *DB) Beginx() (*sqlx.Tx, error) {
+	return d.write.Beginx()
+}
+
+// Exec overrides sqlx.DB.Exec to route all writes through the write connection.
+func (d *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return d.write.Exec(query, args...)
+}
+
+// NamedExec overrides sqlx.DB.NamedExec for named-param writes.
+func (d *DB) NamedExec(query string, arg interface{}) (sql.Result, error) {
+	return d.write.NamedExec(query, arg)
+}
+
+// Close closes both pools cleanly.
+func (d *DB) Close() error {
+	rerr := d.DB.Close()
+	werr := d.write.Close()
+	if rerr != nil {
+		return rerr
+	}
+	return werr
 }
 
 func NewDB(dbPath string) (*DB, error) {
+	write, err := openConn(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open write conn: %w", err)
+	}
+	// Single write connection — SQLite only allows one writer at a time anyway.
+	// Extra write connections just queue up burning busy_timeout.
+	write.SetMaxOpenConns(1)
+	write.SetMaxIdleConns(1)
+
+	read, err := openConn(dbPath)
+	if err != nil {
+		write.Close()
+		return nil, fmt.Errorf("open read conn: %w", err)
+	}
+	// WAL mode allows many concurrent readers, each with their own snapshot.
+	read.SetMaxOpenConns(4)
+	read.SetMaxIdleConns(4)
+
+	db := &DB{DB: read, write: write}
+
+	if err := migrate(write); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+// openConn opens a SQLite connection and applies all required pragmas.
+// Pragmas are per-connection in SQLite, so every connection needs this.
+func openConn(dbPath string) (*sqlx.DB, error) {
 	db, err := sqlx.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// modernc.org/sqlite requires explicit pragmas
-	_, err = db.Exec("PRAGMA busy_timeout = 5000;")
-	if err != nil {
-		return nil, err
-	}
-	_, err = db.Exec("PRAGMA journal_mode = WAL;")
-	if err != nil {
-		return nil, err
-	}
-
-	// Increase connection pool, WAL mode and busy_timeout will handle the rest
-	db.SetMaxOpenConns(10)
-
-	if err := migrate(db); err != nil {
-		return nil, err
+	pragmas := []string{
+		// Wait up to 5s instead of immediately returning SQLITE_BUSY.
+		"PRAGMA busy_timeout = 5000;",
+		// WAL: readers don't block writers, writers don't block readers.
+		"PRAGMA journal_mode = WAL;",
+		// NORMAL is safe with WAL (no data loss on crash) and much faster than FULL.
+		"PRAGMA synchronous = NORMAL;",
+		// Enforce FK constraints — SQLite ignores them by default.
+		"PRAGMA foreign_keys = ON;",
+		// Prevent WAL file growing unboundedly under write load.
+		"PRAGMA wal_autocheckpoint = 1000;",
 	}
 
-	return &DB{db}, nil
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("pragma %q: %w", p, err)
+		}
+	}
+
+	return db, nil
 }
 
 func migrate(db *sqlx.DB) error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS artists (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT UNIQUE NOT NULL
-	);
-
-	CREATE TABLE IF NOT EXISTS albums (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		artist_id INTEGER NOT NULL,
-		title TEXT NOT NULL,
-		cover_art TEXT,
-		UNIQUE(artist_id, title),
-		FOREIGN KEY(artist_id) REFERENCES artists(id)
-	);
-
-	CREATE TABLE IF NOT EXISTS tracks (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		album_id INTEGER NOT NULL,
-		title TEXT NOT NULL,
-		path TEXT UNIQUE NOT NULL,
-		duration INTEGER DEFAULT 0,
-		bitrate INTEGER DEFAULT 0,
-		FOREIGN KEY(album_id) REFERENCES albums(id)
-	);
-
-	CREATE TABLE IF NOT EXISTS jobs (
-		id TEXT PRIMARY KEY,
-		type TEXT NOT NULL,
-		status TEXT NOT NULL,
-		details TEXT,
-		progress TEXT,
-		error TEXT,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE IF NOT EXISTS metadata_changes (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		track_id INTEGER NOT NULL,
-		field TEXT NOT NULL,
-		old_value TEXT,
-		new_value TEXT,
-		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY(track_id) REFERENCES tracks(id)
-	);
-	`
-	_, err := db.Exec(schema)
-	if err != nil {
-		log.Printf("Migration error: %v", err)
+	// Run each statement individually — multi-statement Exec is not guaranteed
+	// behavior across SQLite driver versions.
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS artists (
+			id   TEXT PRIMARY KEY,
+			name TEXT UNIQUE NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS albums (
+			id        TEXT PRIMARY KEY,
+			artist_id TEXT NOT NULL,
+			title     TEXT NOT NULL,
+			cover_art TEXT,
+			UNIQUE(artist_id, title),
+			FOREIGN KEY(artist_id) REFERENCES artists(id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS tracks (
+			id       TEXT PRIMARY KEY,
+			album_id TEXT NOT NULL,
+			title    TEXT NOT NULL,
+			path     TEXT UNIQUE NOT NULL,
+			duration INTEGER DEFAULT 0,
+			bitrate  INTEGER DEFAULT 0,
+			FOREIGN KEY(album_id) REFERENCES albums(id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS jobs (
+			id         TEXT     PRIMARY KEY,
+			type       TEXT     NOT NULL,
+			status     TEXT     NOT NULL,
+			details    TEXT,
+			progress   TEXT,
+			error      TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS metadata_changes (
+			id        TEXT     PRIMARY KEY,
+			track_id  TEXT     NOT NULL,
+			field     TEXT     NOT NULL,
+			old_value TEXT,
+			new_value TEXT,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(track_id) REFERENCES tracks(id)
+		)`,
 	}
-	return err
+
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("Migration error: %v", err)
+			return err
+		}
+	}
+
+	return nil
 }

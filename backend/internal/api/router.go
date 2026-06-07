@@ -2,10 +2,8 @@ package api
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"os/exec"
-	"strconv"
 	"strings"
 
 	"yt-scraper/internal/download"
@@ -17,9 +15,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func NewRouter(d *download.Downloader, lib *library.Service, meta *metadata.Service, jm *jobs.Manager, sc *scanner.Scanner) *mux.Router {
-	r := mux.NewRouter()
-
+// RegisterRoutes registers all API routes to the provided router.
+func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service, meta *metadata.Service, jm *jobs.Manager, s *scanner.Scanner) {
 	// Download APIs
 	r.HandleFunc("/info", getInfo(d)).Methods("GET")
 	r.HandleFunc("/queue", queueDownloads(d)).Methods("POST")
@@ -37,33 +34,31 @@ func NewRouter(d *download.Downloader, lib *library.Service, meta *metadata.Serv
 	r.HandleFunc("/library/artists/{id}/albums", getAlbums(lib)).Methods("GET")
 	r.HandleFunc("/library/albums/{id}/tracks", getTracks(lib)).Methods("GET")
 	r.HandleFunc("/library/albums/{id}", getAlbum(lib)).Methods("GET")
-	r.HandleFunc("/library/albums/{id}/cover", getAlbumCover(lib)).Methods("GET")
-	r.HandleFunc("/library/albums/{id}", deleteAlbum(lib)).Methods("DELETE")
 	r.HandleFunc("/library/albums/{id}/rename", renameAlbum(lib)).Methods("POST")
+	r.HandleFunc("/library/albums/{id}", deleteAlbum(lib)).Methods("DELETE")
 	r.HandleFunc("/library/tracks/{id}", deleteTrack(lib)).Methods("DELETE")
-	r.HandleFunc("/library/scan", triggerScan(sc)).Methods("POST")
+	r.HandleFunc("/library/scan", triggerScan(s)).Methods("POST")
 
 	// Metadata APIs
 	r.HandleFunc("/metadata/analyze/{album_id}", analyzeAlbum(meta)).Methods("GET")
 	r.HandleFunc("/metadata/preview", previewMetadata(meta)).Methods("POST")
 	r.HandleFunc("/metadata/apply", applyMetadata(meta)).Methods("POST")
+}
 
-	return r
+func sendJSONError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 func getInfo(d *download.Downloader) http.HandlerFunc {
-	// Re-using the same yt-dlp logic from main.go
 	return func(w http.ResponseWriter, r *http.Request) {
-		// This uses the yt-dlp to get playlist. For brevity, it is similar to previous.
-		// Since we didn't extract yt-dlp info logic to download package, we can put it here or there.
-		// For now we will mock or move it.
-		// We'll reimplement quickly.
 		url := r.URL.Query().Get("url")
 		if url == "" {
 			url = r.URL.Query().Get("id")
 		}
 		if url == "" {
-			http.Error(w, `{"error":"missing url or id"}`, http.StatusBadRequest)
+			sendJSONError(w, "missing url or id", http.StatusBadRequest)
 			return
 		}
 
@@ -75,16 +70,15 @@ func getInfo(d *download.Downloader) http.HandlerFunc {
 			}
 		}
 
-		// (The actual exec.Command to yt-dlp should go here. We'll simplify for the example.)
 		args := []string{"--dump-single-json", "--flat-playlist", "--playlist-end", "200", url}
 		cmd := exec.Command("yt-dlp", args...)
 		out, err := cmd.Output()
 		if err != nil {
-			http.Error(w, `{"error":"failed to fetch info"}`, http.StatusInternalServerError)
+			sendJSONError(w, "failed to fetch info", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(out) // Pass raw JSON from yt-dlp.
+		w.Write(out)
 	}
 }
 
@@ -92,14 +86,19 @@ func queueDownloads(d *download.Downloader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req []download.DownloadDetails
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
 			return
 		}
 
-		jobIDs, err := d.BulkQueueDownloads(req)
+		created, err := d.BulkQueueDownloads(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		var jobIDs []string
+		for _, j := range created {
+			jobIDs = append(jobIDs, j.ID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -114,7 +113,7 @@ func getJobs(jm *jobs.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		jobsList, err := jm.GetAllJobs()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -155,7 +154,11 @@ func setConfig(d *download.Downloader) http.HandlerFunc {
 // Library Handlers
 func getArtists(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		res, _ := lib.GetArtists()
+		res, err := lib.GetArtists()
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(res)
 	}
@@ -163,15 +166,12 @@ func getArtists(lib *library.Service) http.HandlerFunc {
 
 func getAlbums(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
+		vars := mux.Vars(r)
+		id := vars["id"]
 		res, err := lib.GetAlbumsByArtist(id)
 		if err != nil {
-			log.Printf("Error fetching albums for artist %d: %v", id, err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
-		}
-		if res == nil {
-			res = []library.Album{}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(res)
@@ -180,8 +180,13 @@ func getAlbums(lib *library.Service) http.HandlerFunc {
 
 func getTracks(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
-		res, _ := lib.GetTracksByAlbum(id)
+		vars := mux.Vars(r)
+		id := vars["id"]
+		res, err := lib.GetTracksByAlbum(id)
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(res)
 	}
@@ -189,19 +194,32 @@ func getTracks(lib *library.Service) http.HandlerFunc {
 
 func getAlbum(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
-		res, _ := lib.GetAlbum(id)
+		vars := mux.Vars(r)
+		id := vars["id"]
+		res, err := lib.GetAlbum(id)
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusNotFound)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(res)
 	}
 }
 
-func deleteTrack(lib *library.Service) http.HandlerFunc {
+func renameAlbum(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
-		err := lib.DeleteTrack(id)
+		vars := mux.Vars(r)
+		id := vars["id"]
+		var req struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		err := lib.RenameAlbum(id, req.Title)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -210,64 +228,49 @@ func deleteTrack(lib *library.Service) http.HandlerFunc {
 
 func deleteAlbum(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
+		vars := mux.Vars(r)
+		id := vars["id"]
 		err := lib.DeleteAlbum(id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
-func renameAlbum(lib *library.Service) http.HandlerFunc {
+func deleteTrack(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
-		var req struct {
-			Title string `json:"title"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid json", http.StatusBadRequest)
-			return
-		}
-		err := lib.UpdateAlbumTitle(id, req.Title)
+		vars := mux.Vars(r)
+		id := vars["id"]
+		err := lib.DeleteTrack(id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
-func getAlbumCover(lib *library.Service) http.HandlerFunc {
+func triggerScan(s *scanner.Scanner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
-		path, err := lib.GetFirstTrackPath(id)
-		if err != nil || path == "" {
-			http.Error(w, "Not found", http.StatusNotFound)
+		err := s.Scan()
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		cmd := exec.Command("ffmpeg", "-i", path, "-an", "-c:v", "copy", "-f", "image2pipe", "-")
-		out, err := cmd.Output()
-		if err != nil || len(out) == 0 {
-			http.Error(w, "No cover", http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", http.DetectContentType(out))
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		w.Write(out)
+		w.WriteHeader(http.StatusAccepted)
 	}
 }
 
 // Metadata Handlers
 func analyzeAlbum(meta *metadata.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["album_id"])
+		vars := mux.Vars(r)
+		id := vars["album_id"]
 		res, err := meta.AnalyzeAlbum(id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -278,8 +281,15 @@ func analyzeAlbum(meta *metadata.Service) http.HandlerFunc {
 func previewMetadata(meta *metadata.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req metadata.PreviewRequest
-		json.NewDecoder(r.Body).Decode(&req)
-		res, _ := meta.PreviewChanges(req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		res, err := meta.PreviewChanges(req)
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(res)
 	}
@@ -288,10 +298,13 @@ func previewMetadata(meta *metadata.Service) http.HandlerFunc {
 func applyMetadata(meta *metadata.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req []metadata.PreviewResponse
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
 		err := meta.ApplyChanges(req)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
