@@ -1,0 +1,24 @@
+name: jellyide
+
+# Deployment compose — runs a prebuilt image, no build step.
+# Override via environment variables or .env file, e.g.:
+#   IMAGE=jellyide:eda0b01 PORT=9090 MUSIC_DIR=/data/music docker compose -f docker-compose.prod.yml up -d
+services:
+  jelly-ide:
+    image: ${IMAGE:-jellyide:latest}
+    container_name: jelly-ide
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ${MUSIC_DIR:-/mnt/media/music}:/mnt/media/music
+    environment:
+      - DOWNLOAD_DIR=/mnt/media/music
+      - CONCURRENT_DOWNLOAD=${CONCURRENT_DOWNLOAD:-2}
+      - PORT=8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/info"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -51,5 +51,28 @@ JellyIDE is designed to be easily deployed via Docker.
 
 *Note: On the first startup, JellyIDE will automatically scan the mapped directory and begin populating your library.*
 
+### Production Deployment
+
+`docker-compose.prod.yml` runs a prebuilt image (no build step):
+
+```bash
+# Build the image (locally, or push to your registry and pull on the target host)
+docker build -t jellyide:latest .
+
+# Deploy
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Overridable via environment variables (or a `.env` file next to the compose file):
+
+| Variable             | Default             | Purpose                        |
+|----------------------|---------------------|--------------------------------|
+| `IMAGE`              | `jellyide:latest`   | Image to run                   |
+| `PORT`               | `8080`              | Host port                      |
+| `MUSIC_DIR`          | `/mnt/media/music`  | Music library path on host     |
+| `CONCURRENT_DOWNLOAD`| `2`                 | Parallel yt-dlp downloads      |
+
+The service includes a healthcheck (`/api/info`) and `restart: unless-stopped`.
+
 ## License
 MIT License
