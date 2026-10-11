@@ -96,8 +96,8 @@ import (
 // single-connection write pool, preventing SQLITE_BUSY under concurrent
 // load without requiring any changes to callers.
 type DB struct {
-	*sqlx.DB       // read pool — embedded for full backward compatibility
-	write *sqlx.DB // single write connection, serializes all mutations
+	*sqlx.DB          // read pool — embedded for full backward compatibility
+	write    *sqlx.DB // single write connection, serializes all mutations
 }
 
 // Beginx overrides sqlx.DB.Beginx to always start transactions on the

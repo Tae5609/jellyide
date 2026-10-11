@@ -43,7 +43,7 @@ func (s *Scanner) Scan() error {
 
 	go func() {
 		s.jobManager.UpdateJobStatus(job.ID, jobs.StatusRunning, "Scanning...", "")
-		
+
 		count := 0
 		err := filepath.Walk(s.basePath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -100,7 +100,7 @@ func (s *Scanner) processFile(path string) {
 	if title == "" {
 		title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
-	
+
 	rel, _ := filepath.Rel(s.basePath, path)
 	parts := strings.Split(rel, string(os.PathSeparator))
 
@@ -144,7 +144,7 @@ func (s *Scanner) processFile(path string) {
 
 func (s *Scanner) detectCover(albumID string, dir string) {
 	coverNames := []string{"cover.jpg", "cover.png", "folder.jpg", "front.jpg", "album.jpg"}
-	
+
 	for _, name := range coverNames {
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); err == nil {

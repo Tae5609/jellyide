@@ -43,7 +43,7 @@ func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir str
 		ytDlpPath:       "yt-dlp",
 	}
 	d.cond = sync.NewCond(&d.mu)
-	
+
 	// Recover queued jobs from DB on startup
 	allJobs, err := jobManager.GetAllJobs()
 	if err == nil {
@@ -197,7 +197,7 @@ func (d *Downloader) processDownload(jobID string) {
 		d.jobManager.UpdateJobStatus(jobID, jobs.StatusFailed, "", errStr)
 	} else {
 		d.jobManager.UpdateJobStatus(jobID, jobs.StatusCompleted, "100%", "")
-		
+
 		// Auto-index
 		downloadedFile := strings.Replace(outTemplate, "%(ext)s", "flac", 1)
 		if d.scanner != nil {

@@ -1,13 +1,13 @@
 package library
 
 import (
+	"github.com/google/uuid"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"github.com/google/uuid"
 	"yt-scraper/internal/db"
 )
 
@@ -21,7 +21,7 @@ type Album struct {
 	ArtistID string `json:"artist_id" db:"artist_id"`
 	Title    string `json:"title" db:"title"`
 	CoverArt string `json:"cover_art" db:"cover_art"`
-	Artist   string `json:"artist" db:"artist_name"` 
+	Artist   string `json:"artist" db:"artist_name"`
 }
 
 type Track struct {
@@ -82,14 +82,14 @@ func (s *Service) GetTracksByAlbum(albumID string) ([]Track, error) {
 func (s *Service) EnsureArtist(name string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	name = strings.TrimSpace(name)
 	var id string
 	err := s.db.Get(&id, "SELECT id FROM artists WHERE name = ?", name)
 	if err == nil {
 		return id, nil
 	}
-	
+
 	id = uuid.New().String()
 	_, err = s.db.Exec("INSERT INTO artists (id, name) VALUES (?, ?)", id, name)
 	if err != nil {
@@ -112,7 +112,7 @@ func (s *Service) EnsureAlbum(artistID string, title string) (string, error) {
 	if err == nil {
 		return id, nil
 	}
-	
+
 	id = uuid.New().String()
 	_, err = s.db.Exec("INSERT INTO albums (id, artist_id, title) VALUES (?, ?, ?)", id, artistID, title)
 	if err != nil {
@@ -151,7 +151,7 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 				tracks[i].Path = filepath.Join(newPath, rel)
 				s.db.Exec("UPDATE tracks SET path = ? WHERE id = ?", tracks[i].Path, tracks[i].ID)
 			}
-			
+
 			if album.CoverArt != "" && strings.HasPrefix(album.CoverArt, "/media/") {
 				oldFolder := filepath.Base(oldPath)
 				newFolder := filepath.Base(newPath)

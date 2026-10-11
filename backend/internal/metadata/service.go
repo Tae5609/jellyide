@@ -224,7 +224,7 @@ func (s *Service) ApplyChanges(previews []PreviewResponse) error {
 
 		// 4. Log change
 		changeID := "change_" + p.TrackID
-		s.db.Exec("INSERT INTO metadata_changes (id, track_id, field, old_value, new_value) VALUES (?, ?, 'title', ?, ?)", 
+		s.db.Exec("INSERT INTO metadata_changes (id, track_id, field, old_value, new_value) VALUES (?, ?, 'title', ?, ?)",
 			changeID, p.TrackID, p.OldTitle, p.NewTitle)
 	}
 

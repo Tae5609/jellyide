@@ -44,7 +44,7 @@ func main() {
 	// API Router (Using Subrouter natively)
 	apiSub := r.PathPrefix("/api").Subrouter()
 	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner)
-	
+
 	// Serve media files
 	r.PathPrefix("/media/").Handler(http.StripPrefix("/media", http.FileServer(http.Dir(downloadDir))))
 
@@ -52,7 +52,7 @@ func main() {
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		fullPath := filepath.Join("./frontend/build", path)
-		
+
 		// If path is "/" or file doesn't exist, serve index.html
 		if path == "/" {
 			http.ServeFile(w, r, "./frontend/build/index.html")

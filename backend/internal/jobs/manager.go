@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"yt-scraper/internal/db"
 	"github.com/google/uuid"
+	"yt-scraper/internal/db"
 )
 
 type JobStatus string
