@@ -82,16 +82,8 @@ func main() {
 		}
 		fullPath := filepath.Join(spaBuildDir, rel)
 
-		// If path is "/" or file doesn't exist, serve index.html
-		if path == "/" {
-			http.ServeFile(w, r, filepath.Join(spaBuildDir, "index.html"))
-			return
-		}
-
-		// The request path was validated above: it is non-empty, contains
-		// no ".." segment, and fullPath is filepath.Join-ed (cleaned) under
-		// spaBuildDir. The taint engine cannot see through that.
-		info, err := os.Stat(fullPath) //nolint:gosec // G703 - path contained to spaBuildDir by the checks above; FileServer re-validates when serving
+		// If the file doesn't exist, serve index.html.
+		info, err := os.Stat(fullPath) //nolint:gosec // G703 - rel was validated above (non-empty, no "..") and Join keeps fullPath under spaBuildDir; FileServer re-validates when serving
 		if os.IsNotExist(err) || info.IsDir() {
 			http.ServeFile(w, r, filepath.Join(spaBuildDir, "index.html"))
 			return
