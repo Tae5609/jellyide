@@ -97,10 +97,15 @@ func getInfo(_ *download.Downloader) http.HandlerFunc {
 			sendJSONError(w, "failed to fetch info", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write(out); err != nil {
-			log.Printf("api: writing info response: %v", err)
+		// Re-encode the yt-dlp output instead of echoing it raw, so
+		// untrusted strings from the fetched playlist (titles, etc.) cannot
+		// carry raw markup into the response (gosec G705).
+		var payload interface{}
+		if err := json.Unmarshal(out, &payload); err != nil {
+			sendJSONError(w, "failed to parse yt-dlp output", http.StatusInternalServerError)
+			return
 		}
+		writeJSON(w, payload)
 	}
 }
 
