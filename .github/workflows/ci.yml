@@ -8,7 +8,7 @@ on:
 
 jobs:
   backend:
-    name: Backend (go build + vet)
+    name: Backend (lint, vet, race tests, build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,11 +24,53 @@ jobs:
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
 
+      # Same linter version as backend/.golangci.yml and the Makefile.
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
+          working-directory: backend
+
       - name: Vet
         run: go vet ./...
 
+      - name: Race tests with coverage
+        run: go test -race -coverprofile=coverage.out ./...
+
       - name: Build
         run: go build ./...
+
+      - name: Total coverage
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}')
+          {
+            echo "## Backend test coverage"
+            echo ""
+            echo "Total statement coverage: **${total}**"
+            echo ""
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python:
+    name: Python (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same ruff version as the Makefile.
+      - name: Ruff check
+        uses: astral-sh/ruff-action@v4.1.0
+        with:
+          version: "0.17.6"
+          args: "check --output-format=full"
+
+      - name: Ruff format check
+        uses: astral-sh/ruff-action@v4.1.0
+        with:
+          version: "0.17.6"
+          args: "format --check"
 
   frontend:
     name: Frontend (react build)
