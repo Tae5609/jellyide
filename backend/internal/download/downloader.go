@@ -1,7 +1,10 @@
+// Package download implements the yt-dlp backed download queue: it tracks
+// download jobs, limits concurrency and hands finished files to the scanner.
 package download
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +15,8 @@ import (
 	"yt-scraper/internal/scanner"
 )
 
-type DownloadDetails struct {
+// Details describes one video to download, as sent by the frontend.
+type Details struct {
 	VideoID   string `json:"video_id"`
 	Title     string `json:"title"`
 	Artist    string `json:"artist"`
@@ -20,6 +24,7 @@ type DownloadDetails struct {
 	Thumbnail string `json:"thumbnail"`
 }
 
+// Downloader manages the download queue and the concurrency limit.
 type Downloader struct {
 	jobManager      *jobs.Manager
 	scanner         *scanner.Scanner
@@ -33,6 +38,8 @@ type Downloader struct {
 	ytDlpPath       string
 }
 
+// NewDownloader builds a Downloader, re-queues unfinished download jobs
+// found in the database and starts the dispatcher.
 func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir string) *Downloader {
 	d := &Downloader{
 		jobManager:      jobManager,
@@ -49,7 +56,9 @@ func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir str
 	if err == nil {
 		for _, j := range allJobs {
 			if j.Type == jobs.TypeDownload && (j.Status == jobs.StatusQueued || j.Status == jobs.StatusDownloading) {
-				jobManager.UpdateJobStatus(j.ID, jobs.StatusQueued, "0%", "")
+				if uerr := jobManager.UpdateJobStatus(j.ID, jobs.StatusQueued, "0%", ""); uerr != nil {
+					log.Printf("download: requeue job %s: %v", j.ID, uerr)
+				}
 				d.queue <- j.ID
 			}
 		}
@@ -59,15 +68,18 @@ func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir str
 	return d
 }
 
-func (d *Downloader) QueueDownload(details DownloadDetails) (*jobs.Job, error) {
-	created, err := d.BulkQueueDownloads([]DownloadDetails{details})
+// QueueDownload queues a single download and returns its job.
+func (d *Downloader) QueueDownload(details Details) (*jobs.Job, error) {
+	created, err := d.BulkQueueDownloads([]Details{details})
 	if err != nil || len(created) == 0 {
 		return nil, err
 	}
 	return created[0], nil
 }
 
-func (d *Downloader) BulkQueueDownloads(detailsList []DownloadDetails) ([]*jobs.Job, error) {
+// BulkQueueDownloads creates one queued job per details entry and pushes
+// them onto the download queue.
+func (d *Downloader) BulkQueueDownloads(detailsList []Details) ([]*jobs.Job, error) {
 	// Convert details to interface list for BulkCreateJobs
 	interfaces := make([]interface{}, len(detailsList))
 	for i, d := range detailsList {
@@ -89,6 +101,8 @@ func (d *Downloader) BulkQueueDownloads(detailsList []DownloadDetails) ([]*jobs.
 	return created, nil
 }
 
+// SetLimit changes the number of concurrent downloads; waiting workers are
+// woken up.
 func (d *Downloader) SetLimit(limit int) {
 	d.mu.Lock()
 	d.concurrentLimit = limit
@@ -96,22 +110,33 @@ func (d *Downloader) SetLimit(limit int) {
 	d.mu.Unlock()
 }
 
+// GetLimit returns the current concurrency limit.
 func (d *Downloader) GetLimit() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.concurrentLimit
 }
 
+// SetProxy sets the proxy passed to yt-dlp as --proxy.
 func (d *Downloader) SetProxy(proxy string) {
 	d.mu.Lock()
 	d.proxy = proxy
 	d.mu.Unlock()
 }
 
+// GetProxy returns the currently configured proxy (may be empty).
 func (d *Downloader) GetProxy() string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.proxy
+}
+
+// setStatus updates the job status and logs failures; a status write must
+// never fail the download pipeline itself.
+func (d *Downloader) setStatus(id string, status jobs.JobStatus, progress, errMsg string) {
+	if err := d.jobManager.UpdateJobStatus(id, status, progress, errMsg); err != nil {
+		log.Printf("download: update job %s to %s: %v", id, status, err)
+	}
 }
 
 func (d *Downloader) dispatcher() {
@@ -146,12 +171,12 @@ func (d *Downloader) processDownload(jobID string) {
 		return
 	}
 
-	d.jobManager.UpdateJobStatus(jobID, jobs.StatusDownloading, "0%", "")
+	d.setStatus(jobID, jobs.StatusDownloading, "0%", "")
 
-	var details DownloadDetails
+	var details Details
 	err = d.parseDetails(job.Details, &details)
 	if err != nil {
-		d.jobManager.UpdateJobStatus(jobID, jobs.StatusFailed, "", "Invalid job details")
+		d.setStatus(jobID, jobs.StatusFailed, "", "Invalid job details")
 		return
 	}
 
@@ -160,7 +185,10 @@ func (d *Downloader) processDownload(jobID string) {
 	title := sanitize(details.Title)
 
 	outDir := filepath.Join(d.downloadDir, artist, album)
-	os.MkdirAll(outDir, 0755)
+	if err := os.MkdirAll(outDir, 0o755); err != nil { //nolint:gosec // G301 - the music dir is a shared media library that other services (e.g. a music player) must read; not a private dir
+		d.setStatus(jobID, jobs.StatusFailed, "", "failed to create output directory: "+err.Error())
+		return
+	}
 
 	outTemplate := filepath.Join(outDir, title+".%(ext)s")
 
@@ -184,7 +212,7 @@ func (d *Downloader) processDownload(jobID string) {
 		args = append(args, "--proxy", proxy)
 	}
 
-	cmd := exec.Command(d.ytDlpPath, args...)
+	cmd := exec.Command(d.ytDlpPath, args...) //nolint:gosec // G204 - ytDlpPath is the fixed "yt-dlp" binary; user values only ever fill named option values (URL is literal-prefixed)
 
 	output, err := cmd.CombinedOutput()
 	outputStr := string(output)
@@ -194,9 +222,9 @@ func (d *Downloader) processDownload(jobID string) {
 		if len(errStr) > 500 {
 			errStr = errStr[:500]
 		}
-		d.jobManager.UpdateJobStatus(jobID, jobs.StatusFailed, "", errStr)
+		d.setStatus(jobID, jobs.StatusFailed, "", errStr)
 	} else {
-		d.jobManager.UpdateJobStatus(jobID, jobs.StatusCompleted, "100%", "")
+		d.setStatus(jobID, jobs.StatusCompleted, "100%", "")
 
 		// Auto-index
 		downloadedFile := strings.Replace(outTemplate, "%(ext)s", "flac", 1)

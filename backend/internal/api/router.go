@@ -111,7 +111,7 @@ func getInfo(_ *download.Downloader) http.HandlerFunc {
 
 func queueDownloads(d *download.Downloader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req []download.DownloadDetails
+		var req []download.Details
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			sendJSONError(w, "invalid json", http.StatusBadRequest)
 			return
