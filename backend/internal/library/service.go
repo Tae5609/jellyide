@@ -1,21 +1,27 @@
+// Package library tracks the artist/album/track hierarchy of the music
+// collection in SQLite and keeps the on-disk folder layout in sync.
 package library
 
 import (
-	"github.com/google/uuid"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/google/uuid"
+
 	"yt-scraper/internal/db"
 )
 
+// Artist is one row in the artists table.
 type Artist struct {
 	ID   string `json:"id" db:"id"`
 	Name string `json:"name" db:"name"`
 }
 
+// Album is one row in the albums table, joined with its artist name.
 type Album struct {
 	ID       string `json:"id" db:"id"`
 	ArtistID string `json:"artist_id" db:"artist_id"`
@@ -24,6 +30,7 @@ type Album struct {
 	Artist   string `json:"artist" db:"artist_name"`
 }
 
+// Track is one row in the tracks table.
 type Track struct {
 	ID       string `json:"id" db:"id"`
 	AlbumID  string `json:"album_id" db:"album_id"`
@@ -33,16 +40,19 @@ type Track struct {
 	Bitrate  int    `json:"bitrate" db:"bitrate"`
 }
 
+// Service provides the library queries and mutations.
 type Service struct {
 	db          *db.DB
 	downloadDir string
 	mu          sync.Mutex
 }
 
+// NewService builds a library Service.
 func NewService(db *db.DB, downloadDir string) *Service {
 	return &Service{db: db, downloadDir: downloadDir}
 }
 
+// GetArtists returns all artists ordered by name.
 func (s *Service) GetArtists() ([]Artist, error) {
 	artists := []Artist{}
 	err := s.db.Select(&artists, "SELECT * FROM artists ORDER BY name ASC")
@@ -52,6 +62,7 @@ func (s *Service) GetArtists() ([]Artist, error) {
 	return artists, err
 }
 
+// GetAlbumsByArtist returns the albums of one artist ordered by title.
 func (s *Service) GetAlbumsByArtist(artistID string) ([]Album, error) {
 	artistID = strings.TrimSpace(artistID)
 	albums := []Album{}
@@ -70,6 +81,7 @@ func (s *Service) GetAlbumsByArtist(artistID string) ([]Album, error) {
 	return albums, nil
 }
 
+// GetTracksByAlbum returns the tracks of one album ordered by title.
 func (s *Service) GetTracksByAlbum(albumID string) ([]Track, error) {
 	tracks := []Track{}
 	err := s.db.Select(&tracks, "SELECT * FROM tracks WHERE album_id = ? ORDER BY title ASC", albumID)
@@ -79,6 +91,7 @@ func (s *Service) GetTracksByAlbum(albumID string) ([]Track, error) {
 	return tracks, err
 }
 
+// EnsureArtist returns the id of the named artist, creating it if missing.
 func (s *Service) EnsureArtist(name string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,6 +115,7 @@ func (s *Service) EnsureArtist(name string) (string, error) {
 	return id, nil
 }
 
+// EnsureAlbum returns the id of (artist, title), creating it if missing.
 func (s *Service) EnsureAlbum(artistID string, title string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -125,6 +139,9 @@ func (s *Service) EnsureAlbum(artistID string, title string) (string, error) {
 	return id, nil
 }
 
+// RenameAlbum renames the album in the database, renames the on-disk
+// directory (updating the stored track paths and cover URL) and rewrites
+// the album tag on every track file with the Python helper.
 func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 	album, err := s.GetAlbum(albumID)
 	if err != nil {
@@ -149,20 +166,26 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 			for i := range tracks {
 				rel, _ := filepath.Rel(oldPath, tracks[i].Path)
 				tracks[i].Path = filepath.Join(newPath, rel)
-				s.db.Exec("UPDATE tracks SET path = ? WHERE id = ?", tracks[i].Path, tracks[i].ID)
+				if _, err := s.db.Exec("UPDATE tracks SET path = ? WHERE id = ?", tracks[i].Path, tracks[i].ID); err != nil {
+					log.Printf("Library: Failed to update path for track %s: %v", tracks[i].ID, err)
+				}
 			}
 
 			if album.CoverArt != "" && strings.HasPrefix(album.CoverArt, "/media/") {
 				oldFolder := filepath.Base(oldPath)
 				newFolder := filepath.Base(newPath)
 				newCover := strings.Replace(album.CoverArt, "/"+oldFolder+"/", "/"+newFolder+"/", 1)
-				s.db.Exec("UPDATE albums SET cover_art = ? WHERE id = ?", newCover, albumID)
+				if _, err := s.db.Exec("UPDATE albums SET cover_art = ? WHERE id = ?", newCover, albumID); err != nil {
+					log.Printf("Library: Failed to update cover for album %s: %v", albumID, err)
+				}
 			}
 		}
 
-		// Use the more robust Python script with mutagen
+		// Use the more robust Python script with mutagen. The `--` stops
+		// option parsing so a file path starting with '-' cannot be read as
+		// an option.
 		for _, t := range tracks {
-			cmd := exec.Command("python3", "update_metadata.py", t.Path, "--album", newTitle)
+			cmd := exec.Command("python3", "update_metadata.py", "--album", newTitle, "--", t.Path) //nolint:gosec // G204 - python3 and the script name are fixed; t.Path is a file path rooted in the music dir, after `--`
 			if out, err := cmd.CombinedOutput(); err != nil {
 				log.Printf("Library: Failed to update album tag for %s: %v. Output: %s", t.Path, err, string(out))
 			}
@@ -173,34 +196,41 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 	return err
 }
 
+// DeleteAlbum removes the album and its tracks from the database (files on
+// disk are left in place).
 func (s *Service) DeleteAlbum(albumID string) error {
 	tx, err := s.db.Beginx()
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("DELETE FROM tracks WHERE album_id = ?", albumID)
-	if err != nil {
-		tx.Rollback()
+	if _, err = tx.Exec("DELETE FROM tracks WHERE album_id = ?", albumID); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Library: rollback delete album: %v", rbErr)
+		}
 		return err
 	}
-	_, err = tx.Exec("DELETE FROM albums WHERE id = ?", albumID)
-	if err != nil {
-		tx.Rollback()
+	if _, err = tx.Exec("DELETE FROM albums WHERE id = ?", albumID); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Library: rollback delete album: %v", rbErr)
+		}
 		return err
 	}
 	return tx.Commit()
 }
 
+// DeleteTrack removes one track from the database (the file stays on disk).
 func (s *Service) DeleteTrack(trackID string) error {
 	_, err := s.db.Exec("DELETE FROM tracks WHERE id = ?", trackID)
 	return err
 }
 
+// SetAlbumCover stores the cover art URL for an album.
 func (s *Service) SetAlbumCover(albumID string, coverPath string) error {
 	_, err := s.db.Exec("UPDATE albums SET cover_art = ? WHERE id = ?", coverPath, albumID)
 	return err
 }
 
+// UpsertTrack inserts or updates (by file path) the track of an album.
 func (s *Service) UpsertTrack(albumID string, title, path string, duration, bitrate int) error {
 	var id string
 	err := s.db.Get(&id, "SELECT id FROM tracks WHERE path = ?", path)
@@ -220,6 +250,7 @@ func (s *Service) UpsertTrack(albumID string, title, path string, duration, bitr
 	return err
 }
 
+// GetAlbum returns the album with the given id (sql.ErrNoRows when missing).
 func (s *Service) GetAlbum(albumID string) (*Album, error) {
 	var a Album
 	query := `
@@ -235,12 +266,14 @@ func (s *Service) GetAlbum(albumID string) (*Album, error) {
 	return &a, nil
 }
 
+// GetTrack returns the track with the given id (sql.ErrNoRows when missing).
 func (s *Service) GetTrack(trackID string) (*Track, error) {
 	var track Track
 	err := s.db.Get(&track, "SELECT * FROM tracks WHERE id = ?", trackID)
 	return &track, err
 }
 
+// sanitizeFilename replaces characters that are illegal in file names.
 func sanitizeFilename(s string) string {
 	replacer := strings.NewReplacer(
 		"/", "-", "\\", "-", ":", "-", "*", "-",
