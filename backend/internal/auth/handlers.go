@@ -1,0 +1,283 @@
+package auth
+
+import (
+	"encoding/json"
+	"errors"
+	"log"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/gorilla/mux"
+)
+
+// ProviderInfo describes one external identity provider in the
+// /auth/providers response.
+type ProviderInfo struct {
+	Enabled bool   `json:"enabled"`
+	Name    string `json:"name"`
+}
+
+// Providers is the shape of GET /auth/providers. T4 (OIDC) and T5 (SAML)
+// fill their fields via SetOIDCProvider / SetSAMLProvider.
+type Providers struct {
+	Enabled bool         `json:"enabled"`
+	Local   bool         `json:"local"`
+	OIDC    ProviderInfo `json:"oidc"`
+	SAML    ProviderInfo `json:"saml"`
+}
+
+// providerState holds the mutable provider registrations.
+type providerState struct {
+	mu   sync.RWMutex
+	oidc ProviderInfo
+	saml ProviderInfo
+}
+
+func newProviderState() *providerState { return &providerState{} }
+
+func (p *providerState) snapshot(cfg Config) Providers {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return Providers{
+		Enabled: cfg.Enabled,
+		Local:   cfg.LocalEnabled,
+		OIDC:    p.oidc,
+		SAML:    p.saml,
+	}
+}
+
+// SetOIDCProvider registers the OIDC provider name and enables it in the
+// /auth/providers response. Called by T4.
+func (s *Service) SetOIDCProvider(name string) {
+	s.providers.mu.Lock()
+	defer s.providers.mu.Unlock()
+	s.providers.oidc = ProviderInfo{Enabled: true, Name: name}
+}
+
+// SetSAMLProvider registers the SAML provider name and enables it in the
+// /auth/providers response. Called by T5.
+func (s *Service) SetSAMLProvider(name string) {
+	s.providers.mu.Lock()
+	defer s.providers.mu.Unlock()
+	s.providers.saml = ProviderInfo{Enabled: true, Name: name}
+}
+
+// Login rate limiting: max loginFailureLimit failures per IP per
+// loginFailureWindow, then requests get 429.
+const (
+	loginFailureLimit  = 10
+	loginFailureWindow = 15 * time.Minute
+)
+
+type loginLimiter struct {
+	mu    sync.Mutex
+	fails map[string][]time.Time
+}
+
+func newLoginLimiter() *loginLimiter {
+	return &loginLimiter{fails: make(map[string][]time.Time)}
+}
+
+// blocked reports whether ip has reached the failure limit inside the window.
+func (l *loginLimiter) blocked(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.pruneLocked(ip, time.Now())) >= loginFailureLimit
+}
+
+// record adds a failed attempt for ip.
+func (l *loginLimiter) record(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	l.fails[ip] = append(l.pruneLocked(ip, now), now)
+}
+
+// reset clears the failure history for ip (after a successful login).
+func (l *loginLimiter) reset(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.fails, ip)
+}
+
+// pruneLocked drops failures older than the window. Caller holds l.mu.
+func (l *loginLimiter) pruneLocked(ip string, now time.Time) []time.Time {
+	cutoff := now.Add(-loginFailureWindow)
+	recent := l.fails[ip][:0]
+	for _, t := range l.fails[ip] {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	if len(recent) == 0 {
+		delete(l.fails, ip)
+		return nil
+	}
+	l.fails[ip] = recent
+	return recent
+}
+
+// dummyHash equalizes bcrypt timing for unknown users.
+var dummyHash string
+
+func init() {
+	if h, err := HashPassword("timing-equalizer-dummy-password"); err == nil {
+		dummyHash = h
+	}
+}
+
+// RegisterRoutes mounts the auth API on the /api subrouter.
+func (s *Service) RegisterRoutes(r *mux.Router) {
+	r.HandleFunc("/auth/providers", s.handleProviders).Methods(http.MethodGet)
+	r.HandleFunc("/auth/login", s.handleLogin).Methods(http.MethodPost)
+	r.HandleFunc("/auth/logout", s.handleLogout).Methods(http.MethodPost)
+	r.HandleFunc("/auth/me", s.handleMe).Methods(http.MethodGet)
+	r.HandleFunc("/auth/password", s.handleChangePassword).Methods(http.MethodPost)
+}
+
+// handleProviders: GET /api/auth/providers
+func (s *Service) handleProviders(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.providers.snapshot(s.cfg))
+}
+
+// handleLogin: POST /api/auth/login
+func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !s.cfg.LocalEnabled {
+		writeJSONError(w, http.StatusForbidden, "local login disabled")
+		return
+	}
+
+	ip := clientIP(r)
+	if s.limiter.blocked(ip) {
+		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
+
+	user, err := s.GetUserByUsername(req.Username)
+	var valid bool
+	switch {
+	case errors.Is(err, ErrNoUser):
+		// Unknown user: still run bcrypt against a dummy hash so response
+		// timing does not reveal whether the username exists.
+		valid = CheckPassword(dummyHash, req.Password)
+	case err != nil:
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	case user.PasswordHash == nil:
+		// External-provider user with no local password.
+		valid = CheckPassword(dummyHash, req.Password)
+	default:
+		valid = CheckPassword(*user.PasswordHash, req.Password)
+	}
+
+	if !valid {
+		s.limiter.record(ip)
+		writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	s.limiter.reset(ip)
+	if err := s.TouchLastLogin(user.ID); err != nil {
+		log.Printf("[auth] touch last login: %v", err)
+	}
+	if err := s.StartSession(w, user.ID); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, user)
+}
+
+// handleLogout: POST /api/auth/logout
+func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if err := s.DestroySession(w, r); err != nil {
+		log.Printf("[auth] logout: %v", err)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleMe: GET /api/auth/me
+func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Enabled {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"id":       "anonymous",
+			"username": "anonymous",
+			"provider": "none",
+			"is_admin": true,
+		})
+		return
+	}
+	u := UserFromContext(r.Context())
+	if u == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+// handleChangePassword: POST /api/auth/password (local users only)
+func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	u := UserFromContext(r.Context())
+	if u == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if u.Provider != "local" {
+		writeJSONError(w, http.StatusForbidden, "password change is only available for local users")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeJSONError(w, http.StatusBadRequest, "new password must be at least 8 characters")
+		return
+	}
+	if u.PasswordHash == nil || !CheckPassword(*u.PasswordHash, req.CurrentPassword) {
+		writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	hash, err := HashPassword(req.NewPassword)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := s.UpdatePassword(u.ID, hash); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// clientIP extracts the peer IP from RemoteAddr.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func writeJSON(w http.ResponseWriter, code int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
+}

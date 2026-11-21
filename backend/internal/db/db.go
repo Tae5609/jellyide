@@ -230,6 +230,26 @@ func migrate(db *sqlx.DB) error {
 			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY(track_id) REFERENCES tracks(id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id            TEXT PRIMARY KEY,
+			username      TEXT UNIQUE NOT NULL,
+			password_hash TEXT,
+			provider      TEXT NOT NULL DEFAULT 'local',
+			subject       TEXT,
+			email         TEXT,
+			display_name  TEXT,
+			is_admin      INTEGER NOT NULL DEFAULT 0,
+			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+			last_login    DATETIME,
+			UNIQUE(provider, subject)
+		)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			token_hash TEXT PRIMARY KEY,
+			user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 	}
 
 	for _, stmt := range statements {

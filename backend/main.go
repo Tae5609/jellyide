@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"yt-scraper/internal/api"
+	"yt-scraper/internal/auth"
 	"yt-scraper/internal/db"
 	"yt-scraper/internal/download"
 	"yt-scraper/internal/jobs"
@@ -15,7 +16,6 @@ import (
 	"yt-scraper/internal/scanner"
 
 	"github.com/gorilla/mux"
-	"github.com/rs/cors"
 )
 
 func main() {
@@ -31,6 +31,12 @@ func main() {
 	}
 	defer database.Close()
 
+	// Initialize auth (bootstraps the admin account when needed)
+	authSvc, err := auth.NewService(auth.LoadConfig(), database)
+	if err != nil {
+		log.Fatal("Failed to initialize auth: ", err)
+	}
+
 	// Initialize Services
 	libService := library.NewService(database, downloadDir)
 	jobManager := jobs.NewManager(database)
@@ -43,6 +49,7 @@ func main() {
 
 	// API Router (Using Subrouter natively)
 	apiSub := r.PathPrefix("/api").Subrouter()
+	authSvc.RegisterRoutes(apiSub)
 	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner)
 
 	// Serve media files
@@ -69,16 +76,15 @@ func main() {
 		http.FileServer(http.Dir("./frontend/build")).ServeHTTP(w, r)
 	})
 
-	c := cors.New(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
-	})
+	// Wrap the whole router with the auth middleware. The SPA is
+	// same-origin, so no CORS handling is needed.
+	handler := authSvc.Middleware(r)
 
 	port := getEnv("PORT", "8080")
 	log.Printf("JellyIDE Server starting on :%s", port)
 	log.Printf("DB Path: %s", dbPath)
 	log.Printf("Media Dir: %s", downloadDir)
-	log.Fatal(http.ListenAndServe(":"+port, c.Handler(r)))
+	log.Fatal(http.ListenAndServe(":"+port, handler))
 }
 
 func getEnv(key, def string) string {
