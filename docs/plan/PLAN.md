@@ -1,4 +1,14 @@
-# Plan: Authentication (local + OIDC + SAML) and mobile UI
+# Roadmap: auth, users, flexible metadata, mobile, quality and docs
+
+Scope, as set by the owner on 2026-11-21:
+1. Authentication: local username/password, OIDC, SAML.
+2. Registration modes: `admin_only` (default), `open`, `approval`. Admins manage users.
+3. Mobile-friendly UI.
+4. Flexible metadata editing: per-track tag fields, bulk edit, cover art, MusicBrainz lookup, history/undo, keyboard shortcuts.
+5. Fix known bugs (`docs/plan/BUGS.md`) and harden security.
+6. Comprehensive quality: unit tests, golangci-lint, ESLint, Prettier, ruff, CI gates.
+7. Clear project documentation: architecture, deployment, auth, metadata guide, API, development.
+8. Conventional Commits and consistent PRs (`docs/plan/CONVENTIONS.md`, `.github/pull_request_template.md`).
 
 ## Current state (2026-11-21)
 - Backend: Go 1.25, gorilla/mux, sqlx + modernc sqlite (`backend/internal/db/db.go`, split read/write pools, `migrate()` builds the schema).
@@ -98,17 +108,22 @@ Agents are defined in `.opencode/agents/`:
 Concurrency: Orion allows 3 concurrent requests, so there are at most 3 parallel `task` calls (2 if rate-limited).
 Launch: `opencode run --pure --agent orchestrator --auto --dir /home/tae5609/jellyide "Execute docs/plan/PLAN.md"` (log in `docs/plan/logs/orchestrator.log`).
 
-Waves (dependency order):
+Waves (dependency order; each task has a brief in `docs/plan/tasks/`):
 | Wave | Task | Branch | Depends on |
 |---|---|---|---|
-| 1 | T1 backend auth core (local, sessions, middleware, bootstrap admin) | `feat/auth-core` | – |
-| 1 | T2 mobile responsive shell and pages | `feat/mobile-ui` | – |
-| 2 | T3 frontend auth (api.js, AuthContext, Login, guards, change password) | `feat/auth-frontend` | T1 contract, T2 merged (CSS) |
-| 2 | T4 OIDC backend | `feat/auth-oidc` | T1 merged |
-| 2 | T5 SAML backend | `feat/auth-saml` | T1 merged |
-| 3 | T6 docs, env, compose, test with a local Keycloak (OIDC+SAML) | `feat/auth-docs` | T3–T5 |
-
-T4 and T5 only add new files plus one line each in route registration, so merge conflicts stay trivial.
+| 1 | T1 backend auth core | `feat/auth-core` | – |
+| 1 | T2 mobile responsive UI | `feat/mobile-ui` | – |
+| 1 | T7 backend quality tooling + unit tests | `test/backend-quality` | merges after T1 |
+| 2 | T3 frontend auth | `feat/auth-frontend` | T1, T2 |
+| 2 | T4 OIDC | `feat/auth-oidc` | T1 |
+| 2 | T5 SAML | `feat/auth-saml` | T1 |
+| 3 | T8 registration modes + admin user management | `feat/users-registration` | T3–T5 |
+| 3 | T10 metadata backend (fields, cover, history, MusicBrainz) | `feat/metadata-fields` | T7 |
+| 4 | T11 metadata editor UI + shortcuts | `feat/metadata-editor-ui` | T10 |
+| 4 | T12 backend bug hunt + hardening | `fix/backend-hardening` | T10 |
+| 5 | T9 frontend lint/format/tests | `test/frontend-quality` | all frontend work |
+| 5 | T6 project documentation + smoke test | `docs/project-docs` | everything |
+| 6 | follow-ups the product owner creates from BUGS.md | `fix/*` | – |
 
 ## Risks
 - The 27B model may struggle with crewjam/saml wiring. T5's brief pins the exact `samlsp` API pattern, and Claude takes over if two attempts fail.

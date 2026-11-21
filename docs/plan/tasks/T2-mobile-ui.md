@@ -4,6 +4,8 @@ Repo: JellyIDE. Frontend in `frontend/` (CRA, React 18, react-router v7, plain C
 
 Problem: there are no `@media` rules. Layout is a fixed 260px sidebar with `.app-container{height:100vh;overflow:hidden}`. Pages use many inline `style={{...}}` for layout (flex rows, fixed widths, grids), which media queries cannot override.
 
+Follow `docs/plan/CONVENTIONS.md` (commit, PR and quality-gate rules).
+
 ## Do
 1. **Shell (App.js + CSS)**
    - Add a `.mobile-topbar` (hidden on desktop) with a hamburger button (aria-label "Open menu"), the logo, and the current page title.
@@ -29,4 +31,4 @@ Problem: there are no `@media` rules. Layout is a fixed 260px sidebar with `.app
 ```
 cd frontend && npm ci && CI=true npm run build
 ```
-The build must succeed with no new ESLint warnings (CI=true turns warnings into errors). Then `git add -A && git commit -m "responsive layout: mobile drawer nav, tablet rail, responsive pages"`.
+The build must succeed with no new ESLint warnings (CI=true turns warnings into errors). Then `git add -A && git commit -m "feat(mobile): add responsive layout with drawer nav and tablet rail"`.

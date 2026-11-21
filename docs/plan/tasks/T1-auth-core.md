@@ -2,6 +2,8 @@
 
 Repo: JellyIDE. Go backend in `backend/` (module name `yt-scraper`). Read `backend/main.go`, `backend/internal/api/router.go`, `backend/internal/db/db.go` first.
 
+Follow `docs/plan/CONVENTIONS.md` (commit, PR and quality-gate rules).
+
 ## Do
 1. Add deps: `cd backend && go get golang.org/x/crypto/bcrypt`.
 2. In `backend/internal/db/db.go` `migrate()`, append these tables (keep the existing schema untouched):
@@ -54,4 +56,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 ```
 cd backend && gofmt -l . && go vet ./... && go build ./... && go test ./...
 ```
-`gofmt -l` must print nothing. Then `git add -A && git commit -m "add local auth, sessions and auth middleware"`.
+`gofmt -l` must print nothing. Then `git add -A && git commit -m "feat(auth): add local login, sessions and auth middleware"`.

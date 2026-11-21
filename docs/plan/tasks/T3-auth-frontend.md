@@ -13,6 +13,8 @@ Repo: JellyIDE. Frontend in `frontend/` (CRA, React 18, react-router v7, plain C
 
 Every protected `POST/PUT/PATCH/DELETE` needs header `X-Requested-With: XMLHttpRequest`, or the server returns 403. Any protected request without a session returns 401.
 
+Follow `docs/plan/CONVENTIONS.md` (commit, PR and quality-gate rules).
+
 ## Do
 1. `frontend/src/api.js`: `export async function apiFetch(path, opts={})`. It prefixes `/api` when the path starts with `/` and is not already `/api`. It sets `credentials:'same-origin'` and `X-Requested-With: XMLHttpRequest`, and sets `Content-Type: application/json` when the body is a string. On a 401 for any path except `/api/auth/me` and `/api/auth/login`, it does `window.dispatchEvent(new Event('auth:unauthorized'))`. It returns the Response (callers keep their `.json()` handling).
 2. Replace **every** `fetch(\`${API}...\`)` in `frontend/src/pages/*.js` with `apiFetch('...')`, and remove the now-unused `API` constants. Keep behaviour identical.
@@ -36,4 +38,4 @@ Every protected `POST/PUT/PATCH/DELETE` needs header `X-Requested-With: XMLHttpR
 cd frontend && npm ci && CI=true npm run build
 grep -rn 'fetch(`${API}' src/ && exit 1 || true
 ```
-Build passes with zero warnings. Commit: `add login page, auth context and route guards`.
+Build passes with zero warnings. Commit: `feat(auth): add login page, auth context and route guards`.
