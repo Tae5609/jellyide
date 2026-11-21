@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,17 +90,30 @@ func (s *Service) CountUsers() (int, error) {
 	return n, err
 }
 
+// GetUserByProviderSubject looks up a user by its (provider, subject) pair.
+func (s *Service) GetUserByProviderSubject(provider, subject string) (*User, error) {
+	var u User
+	err := s.db.Get(&u, `SELECT id, username, password_hash, provider, subject, email, display_name, is_admin FROM users WHERE provider = ? AND subject = ?`, provider, subject)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNoUser
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
 // FindOrCreateExternalUser returns the user for (provider, subject), creating
 // it on first use. Intended for external identity providers (T4 OIDC, T5
-// SAML). If the desired username is already taken, "-<provider>" is appended.
+// SAML). If the resolved username is already taken, "-<provider>" is
+// appended, then "-2", "-3", ... until a free unique name is found.
 func (s *Service) FindOrCreateExternalUser(provider, subject, username, email, displayName string, isAdmin bool) (*User, error) {
 	// Check by unique (provider, subject) first.
-	var existing User
-	err := s.db.Get(&existing, `SELECT id, username, password_hash, provider, subject, email, display_name, is_admin FROM users WHERE provider = ? AND subject = ?`, provider, subject)
+	existing, err := s.GetUserByProviderSubject(provider, subject)
 	if err == nil {
-		return &existing, nil
+		return existing, nil
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, ErrNoUser) {
 		return nil, err
 	}
 
@@ -107,12 +121,19 @@ func (s *Service) FindOrCreateExternalUser(provider, subject, username, email, d
 	if name == "" {
 		name = subject
 	}
+	if name == "" {
+		return nil, errors.New("external user needs a username or a subject")
+	}
 	if _, err := s.GetUserByUsername(name); !errors.Is(err, ErrNoUser) {
 		if err != nil {
 			return nil, err
 		}
-		// Username taken: append the provider to disambiguate.
-		name = username + "-" + provider
+		// Username taken: append the provider (then a counter) to the
+		// resolved name until a free unique name is found.
+		var uerr error
+		if name, uerr = s.uniqueExternalName(name, provider); uerr != nil {
+			return nil, uerr
+		}
 	}
 
 	u := &User{
@@ -128,6 +149,20 @@ func (s *Service) FindOrCreateExternalUser(provider, subject, username, email, d
 		return nil, err
 	}
 	return u, nil
+}
+
+// uniqueExternalName returns a username that is not in use:
+// base-<provider>, base-<provider>-2, base-<provider>-3, ...
+func (s *Service) uniqueExternalName(base, provider string) (string, error) {
+	suffix := base + "-" + provider
+	for n := 2; ; n++ {
+		if _, err := s.GetUserByUsername(suffix); errors.Is(err, ErrNoUser) {
+			return suffix, nil
+		} else if err != nil {
+			return "", err
+		}
+		suffix = fmt.Sprintf("%s-%d", base+"-"+provider, n)
+	}
 }
 
 // randomTokenHash returns the sha256 hex digest of a fresh 32 random bytes.

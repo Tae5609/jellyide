@@ -451,3 +451,68 @@ func newTestServiceErr(t *testing.T, cfg Config) (*Service, error) {
 	}
 	return NewService(cfg, database)
 }
+
+// Regression: the collision suffix must apply to the *resolved* name (the
+// username param, falling back to the subject), and repeated collisions must
+// keep producing valid unique names instead of "-<provider>" or a UNIQUE
+// violation.
+func TestFindOrCreateExternalUserNameCollision(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	// Occupy the base name and the first collision suffix with local users.
+	for _, name := range []string{"alice", "alice-oidc"} {
+		if err := svc.CreateUser(&User{ID: newID(), Username: name, Provider: "local"}); err != nil {
+			t.Fatalf("create %q: %v", name, err)
+		}
+	}
+
+	// alice is taken and alice-oidc is taken too: expect alice-oidc-2.
+	u, err := svc.FindOrCreateExternalUser("oidc", "sub-alice-1", "alice", "alice@example.com", "Alice", false)
+	if err != nil {
+		t.Fatalf("FindOrCreateExternalUser: %v", err)
+	}
+	if u.Username != "alice-oidc-2" {
+		t.Fatalf("username = %q, want %q", u.Username, "alice-oidc-2")
+	}
+
+	// Empty username falls back to the subject; the subject-derived name is
+	// taken, so the suffix must apply to the subject, not to "".
+	if err := svc.CreateUser(&User{ID: newID(), Username: "taken-subject", Provider: "local"}); err != nil {
+		t.Fatalf("create taken-subject: %v", err)
+	}
+	u2, err := svc.FindOrCreateExternalUser("oidc", "taken-subject", "", "", "", false)
+	if err != nil {
+		t.Fatalf("FindOrCreateExternalUser (empty username): %v", err)
+	}
+	if u2.Username != "taken-subject-oidc" {
+		t.Fatalf("username = %q, want %q", u2.Username, "taken-subject-oidc")
+	}
+
+	// Re-login for the same (provider, subject) returns the same user.
+	again, err := svc.FindOrCreateExternalUser("oidc", "sub-alice-1", "alice", "", "", false)
+	if err != nil {
+		t.Fatalf("re-login: %v", err)
+	}
+	if again.ID != u.ID || again.Username != u.Username {
+		t.Fatalf("re-login returned a different user: id=%q username=%q, want id=%q username=%q",
+			again.ID, again.Username, u.ID, u.Username)
+	}
+
+	// No user may have an empty or a duplicated username.
+	var rows []struct {
+		Username string `db:"username"`
+	}
+	if err := svc.db.Select(&rows, `SELECT username FROM users`); err != nil {
+		t.Fatalf("select users: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if row.Username == "" {
+			t.Fatal("found a user with an empty username")
+		}
+		if seen[row.Username] {
+			t.Fatalf("duplicate username %q", row.Username)
+		}
+		seen[row.Username] = true
+	}
+}
