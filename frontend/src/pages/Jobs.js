@@ -32,19 +32,28 @@ export default function Jobs() {
     }
   };
 
+  const formatDetails = (job) => {
+    try {
+      const parsed = JSON.parse(job.details);
+      return parsed.title || parsed.path || job.details;
+    } catch (e) {
+      return job.details;
+    }
+  };
+
   return (
     <div className="page-container fade-in-up">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 32 }}>
+      <div className="page-header-row">
         <div>
-          <h2 style={{ margin: '0 0 8px 0', fontSize: 28, letterSpacing: '-0.03em' }}>Background Jobs</h2>
-          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 15 }}>Monitor downloads and library scans</p>
+          <h2 className="page-title">Background Jobs</h2>
+          <p className="page-subtitle">Monitor downloads and library scans</p>
         </div>
         <button className="btn-secondary" onClick={clearJobs}>
           Clear Completed
         </button>
       </div>
 
-      <div className="card" style={{ padding: 0 }}>
+      <div className="card card-flush">
         {jobs.length === 0 ? (
           <div className="empty-state">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -52,53 +61,77 @@ export default function Jobs() {
             <p>Your job queue is currently empty.</p>
           </div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Details</th>
-                <th>Progress</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map(job => {
-                let detailsStr = job.details;
-                try {
-                  const parsed = JSON.parse(job.details);
-                  detailsStr = parsed.title || parsed.path || job.details;
-                } catch (e) {}
-
-                return (
-                  <tr key={job.id}>
-                    <td>
-                      <span style={{ textTransform: 'capitalize', fontWeight: 500, color: 'var(--text-main)' }}>
-                        {job.type}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${job.status}`}>
-                        {job.status}
-                      </span>
-                    </td>
-                    <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {detailsStr}
-                      {job.error && (
-                        <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>
-                          {job.error}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ fontWeight: 500 }}>{job.progress || '0%'}</td>
-                    <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                      {new Date(job.created_at).toLocaleString()}
-                    </td>
+          <>
+            <div className="table-scroll jobs-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Details</th>
+                    <th>Progress</th>
+                    <th>Time</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {jobs.map(job => (
+                    <tr key={job.id}>
+                      <td>
+                        <span className="job-type">
+                          {job.type}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge ${job.status}`}>
+                          {job.status}
+                        </span>
+                      </td>
+                      <td className="job-details-cell">
+                        {formatDetails(job)}
+                        {job.error && (
+                          <div className="job-error">
+                            {job.error}
+                          </div>
+                        )}
+                      </td>
+                      <td className="job-progress">{job.progress || '0%'}</td>
+                      <td className="job-time">
+                        {new Date(job.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="job-cards">
+              {jobs.map(job => (
+                <div className="job-card" key={job.id}>
+                  <div className="job-card-top">
+                    <span className="job-type">
+                      {job.type}
+                    </span>
+                    <span className={`badge ${job.status}`}>
+                      {job.status}
+                    </span>
+                  </div>
+                  <div className="job-details">
+                    {formatDetails(job)}
+                    {job.error && (
+                      <div className="job-error">
+                        {job.error}
+                      </div>
+                    )}
+                  </div>
+                  <div className="job-card-bottom">
+                    <span className="job-progress">{job.progress || '0%'}</span>
+                    <span className="job-time">
+                      {new Date(job.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>
