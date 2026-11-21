@@ -191,28 +191,9 @@ func (d *Downloader) processDownload(jobID string) {
 	}
 
 	outTemplate := filepath.Join(outDir, title+".%(ext)s")
+	args := buildArgs(details, outTemplate, d.GetProxy())
 
-	args := []string{
-		"https://youtube.com/watch?v=" + details.VideoID,
-		"--extract-audio",
-		"--audio-format", "flac",
-		"--embed-thumbnail",
-		"--embed-metadata",
-		"--parse-metadata", "title:%(artist)s",
-		"--replace-in-metadata", "artist", "^.*$", details.Artist,
-		"--parse-metadata", "title:%(album)s",
-		"--replace-in-metadata", "album", "^.*$", details.Album,
-		"--js-runtimes", "node",
-		"--output", outTemplate,
-		"--newline",
-	}
-
-	proxy := d.GetProxy()
-	if proxy != "" {
-		args = append(args, "--proxy", proxy)
-	}
-
-	cmd := exec.Command(d.ytDlpPath, args...) //nolint:gosec // G204 - ytDlpPath is the fixed "yt-dlp" binary; user values only ever fill named option values (URL is literal-prefixed)
+	cmd := exec.Command(d.ytDlpPath, args...) //nolint:gosec // G204 - ytDlpPath is the fixed "yt-dlp" binary; user values only ever fill named option values (see buildArgs)
 
 	output, err := cmd.CombinedOutput()
 	outputStr := string(output)
@@ -232,6 +213,31 @@ func (d *Downloader) processDownload(jobID string) {
 			d.scanner.IndexFile(downloadedFile)
 		}
 	}
+}
+
+// buildArgs assembles the yt-dlp command line for downloading one video as
+// FLAC. The constructed URL is always prefixed with a literal scheme, and
+// every user-derived value (artist, album, output template) is passed as
+// the value of a named option, so none of them can be parsed as an option.
+func buildArgs(details Details, outTemplate, proxy string) []string {
+	args := []string{
+		"https://youtube.com/watch?v=" + details.VideoID,
+		"--extract-audio",
+		"--audio-format", "flac",
+		"--embed-thumbnail",
+		"--embed-metadata",
+		"--parse-metadata", "title:%(artist)s",
+		"--replace-in-metadata", "artist", "^.*$", details.Artist,
+		"--parse-metadata", "title:%(album)s",
+		"--replace-in-metadata", "album", "^.*$", details.Album,
+		"--js-runtimes", "node",
+		"--output", outTemplate,
+		"--newline",
+	}
+	if proxy != "" {
+		args = append(args, "--proxy", proxy)
+	}
+	return args
 }
 
 func sanitize(s string) string {
