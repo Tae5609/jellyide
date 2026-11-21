@@ -1,0 +1,12 @@
+{
+    "format": {
+        "filename": "/music/root Song.flac",
+        "nb_streams": 1,
+        "format_name": "flac",
+        "duration": "not-a-number",
+        "bit_rate": "",
+        "tags": {
+            "artist": "Only Artist"
+        }
+    }
+}

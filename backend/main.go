@@ -1,3 +1,5 @@
+// Command yt-scraper is the JellyIDE server: it serves the API, the media
+// files and the SPA frontend.
 package main
 
 import (
@@ -5,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"yt-scraper/internal/api"
 	"yt-scraper/internal/auth"
@@ -18,22 +22,31 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// spaBuildDir is where the frontend build output is expected.
+const spaBuildDir = "./frontend/build"
+
 func main() {
 	// Initialize config
 	downloadDir := getEnv("DOWNLOAD_DIR", "/mnt/media/music")
 	dbPath := filepath.Join(downloadDir, "jellyide.db")
-	os.MkdirAll(downloadDir, 0755)
+	if err := os.MkdirAll(downloadDir, 0o755); err != nil { //nolint:gosec // G301 - shared media library dir, world-readable on purpose
+		log.Fatal("Failed to create download dir: ", err)
+	}
 
 	// Initialize DB
 	database, err := db.NewDB(dbPath)
 	if err != nil {
 		log.Fatal("Failed to initialize database: ", err)
 	}
-	defer database.Close()
 
-	// Initialize auth (bootstraps the admin account when needed)
+	// Initialize auth (bootstraps the admin account when needed). The
+	// database is closed explicitly before any log.Fatal below, because
+	// deferred calls do not run when the process exits that way.
 	authSvc, err := auth.NewService(auth.LoadConfig(), database)
 	if err != nil {
+		if cerr := database.Close(); cerr != nil {
+			log.Printf("Failed to close database: %v", cerr)
+		}
 		log.Fatal("Failed to initialize auth: ", err)
 	}
 
@@ -58,22 +71,26 @@ func main() {
 	// SPA Handler for Frontend
 	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		fullPath := filepath.Join("./frontend/build", path)
 
-		// If path is "/" or file doesn't exist, serve index.html
-		if path == "/" {
-			http.ServeFile(w, r, "./frontend/build/index.html")
+		// Resolve the request against the build dir and refuse anything
+		// that could escape it (gosec G703): the relative path must be
+		// non-empty and must not contain a ".." segment.
+		rel := strings.TrimPrefix(path, "/")
+		if rel == "" || strings.Contains(rel, "..") {
+			http.ServeFile(w, r, filepath.Join(spaBuildDir, "index.html"))
 			return
 		}
+		fullPath := filepath.Join(spaBuildDir, rel)
 
-		info, err := os.Stat(fullPath)
+		// If the file doesn't exist, serve index.html.
+		info, err := os.Stat(fullPath) //nolint:gosec // G703 - rel was validated above (non-empty, no "..") and Join keeps fullPath under spaBuildDir; FileServer re-validates when serving
 		if os.IsNotExist(err) || info.IsDir() {
-			http.ServeFile(w, r, "./frontend/build/index.html")
+			http.ServeFile(w, r, filepath.Join(spaBuildDir, "index.html"))
 			return
 		}
 
 		// Otherwise serve the static file
-		http.FileServer(http.Dir("./frontend/build")).ServeHTTP(w, r)
+		http.FileServer(http.Dir(spaBuildDir)).ServeHTTP(w, r)
 	})
 
 	// Wrap the whole router with the auth middleware. The SPA is
@@ -84,7 +101,21 @@ func main() {
 	log.Printf("JellyIDE Server starting on :%s", port)
 	log.Printf("DB Path: %s", dbPath)
 	log.Printf("Media Dir: %s", downloadDir)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+
+	// http.Server with a read-header timeout (gosec G114); no write timeout
+	// so long media streams are unaffected.
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	err = srv.ListenAndServe()
+	if cerr := database.Close(); cerr != nil {
+		log.Printf("Failed to close database: %v", cerr)
+	}
+	if err != nil {
+		log.Fatal("Failed to start server: ", err)
+	}
 }
 
 func getEnv(key, def string) string {

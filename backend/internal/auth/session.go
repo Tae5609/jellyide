@@ -55,7 +55,7 @@ func (s *Service) CreateSession(w http.ResponseWriter, userID string) error {
 
 // sessionCookie builds the session cookie with the right flags.
 func (s *Service) sessionCookie(token string) *http.Cookie {
-	return &http.Cookie{
+	return &http.Cookie{ //nolint:gosec // G124 - the Secure flag is deliberately config-driven (COOKIE_SECURE) so local http dev keeps working
 		Name:     SessionCookieName,
 		Value:    token,
 		Path:     "/",
@@ -123,7 +123,7 @@ func (s *Service) DestroySession(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 - the Secure flag is deliberately config-driven (COOKIE_SECURE) so local http dev keeps working
 		Name:     SessionCookieName,
 		Value:    "",
 		Path:     "/",

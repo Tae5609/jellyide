@@ -1,3 +1,6 @@
+// Package metadata analyzes track titles for common patterns and applies
+// user-confirmed title rewrites (tagged via the Python helper, renamed on
+// disk and recorded in the database).
 package metadata
 
 import (
@@ -14,26 +17,32 @@ import (
 	"yt-scraper/internal/library"
 )
 
+// Service applies and previews metadata changes.
 type Service struct {
 	db  *db.DB
 	lib *library.Service
 }
 
+// NewService builds a metadata Service.
 func NewService(db *db.DB, lib *library.Service) *Service {
 	return &Service{db: db, lib: lib}
 }
 
+// Pattern is one candidate shared substring with its score.
 type Pattern struct {
 	Text  string  `json:"text"`
 	Count int     `json:"count"`
 	Score float64 `json:"score"`
 }
 
+// AnalysisResult is the /metadata/analyze response for an album.
 type AnalysisResult struct {
 	Suggestions      []Pattern `json:"suggestions"`
 	CommonSubstrings []Pattern `json:"common_substrings"`
 }
 
+// AnalyzeAlbum finds the significant shared patterns among the album's
+// track titles.
 func (s *Service) AnalyzeAlbum(albumID string) (*AnalysisResult, error) {
 	tracks, err := s.lib.GetTracksByAlbum(albumID)
 	if err != nil || len(tracks) == 0 {
@@ -117,6 +126,8 @@ func findSignificantPatterns(titles []string) []Pattern {
 	return candidates
 }
 
+// isJunk reports whether a candidate substring is noise (too short, or
+// shorter than three characters with no letters at all).
 func isJunk(s string) bool {
 	trimmed := strings.TrimSpace(s)
 	if len(trimmed) == 0 {
@@ -135,6 +146,7 @@ func isJunk(s string) bool {
 	return false
 }
 
+// PreviewRequest is the /metadata/preview request body.
 type PreviewRequest struct {
 	Action   string   `json:"action"`
 	Target   string   `json:"target"`
@@ -142,12 +154,16 @@ type PreviewRequest struct {
 	TrackIDs []string `json:"track_ids"`
 }
 
+// PreviewResponse is one track's before/after title.
 type PreviewResponse struct {
 	TrackID  string `json:"track_id"`
 	OldTitle string `json:"old_title"`
 	NewTitle string `json:"new_title"`
 }
 
+// PreviewChanges computes the new title for each track without touching
+// anything. Unknown track ids are skipped; an invalid regex leaves the
+// title unchanged.
 func (s *Service) PreviewChanges(req PreviewRequest) ([]PreviewResponse, error) {
 	var results []PreviewResponse
 	for _, id := range req.TrackIDs {
@@ -180,6 +196,8 @@ func (s *Service) PreviewChanges(req PreviewRequest) ([]PreviewResponse, error) 
 	return results, nil
 }
 
+// ApplyChanges writes the previewed titles: tag the file (Python helper),
+// rename it on disk, update the database row and record the change.
 func (s *Service) ApplyChanges(previews []PreviewResponse) error {
 	for _, p := range previews {
 		track, err := s.lib.GetTrack(p.TrackID)
@@ -192,8 +210,10 @@ func (s *Service) ApplyChanges(previews []PreviewResponse) error {
 			continue
 		}
 
-		// 1. Update metadata in-place using the Python script
-		cmd := exec.Command("python3", "update_metadata.py", track.Path, "--title", p.NewTitle)
+		// 1. Update metadata in-place using the Python script. The `--`
+		// stops option parsing so a file path starting with '-' cannot be
+		// read as an option.
+		cmd := exec.Command("python3", "update_metadata.py", "--title", p.NewTitle, "--", track.Path) //nolint:gosec // G204 - python3 and the script name are fixed; track.Path is a file path rooted in the music dir, after `--`
 		if out, err := cmd.CombinedOutput(); err != nil {
 			log.Printf("Metadata: Failed to update title for %s: %v. Output: %s", track.Path, err, string(out))
 			continue
@@ -224,8 +244,10 @@ func (s *Service) ApplyChanges(previews []PreviewResponse) error {
 
 		// 4. Log change
 		changeID := "change_" + p.TrackID
-		s.db.Exec("INSERT INTO metadata_changes (id, track_id, field, old_value, new_value) VALUES (?, ?, 'title', ?, ?)",
-			changeID, p.TrackID, p.OldTitle, p.NewTitle)
+		if _, err := s.db.Exec("INSERT INTO metadata_changes (id, track_id, field, old_value, new_value) VALUES (?, ?, 'title', ?, ?)",
+			changeID, p.TrackID, p.OldTitle, p.NewTitle); err != nil {
+			log.Printf("Metadata: Failed to log change for track %s: %v", p.TrackID, err)
+		}
 	}
 
 	return nil

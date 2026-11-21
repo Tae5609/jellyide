@@ -1,0 +1,22 @@
+[project]
+name = "jellyide-backend"
+version = "0.1.0"
+description = "Python helper for JellyIDE metadata editing (update_metadata.py)"
+requires-python = ">=3.10"
+dependencies = [
+    "mutagen>=1.47",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "W",  # pycodestyle warnings
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "UP", # pyupgrade
+]

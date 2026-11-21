@@ -138,7 +138,7 @@ func (s *Service) RegisterRoutes(r *mux.Router) {
 }
 
 // handleProviders: GET /api/auth/providers
-func (s *Service) handleProviders(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleProviders(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.providers.snapshot(s.cfg))
 }
 
@@ -275,7 +275,9 @@ func clientIP(r *http.Request) string {
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("[auth] writing response: %v", err)
+	}
 }
 
 func writeJSONError(w http.ResponseWriter, code int, msg string) {
