@@ -65,6 +65,13 @@ func sendJSONError(w http.ResponseWriter, message string, code int) {
 	}
 }
 
+// infoArgs assembles the yt-dlp arguments for fetching playlist info. The
+// user-supplied URL is placed after the `--` separator so it can never be
+// parsed as a yt-dlp option (e.g. a value starting with `-`).
+func infoArgs(url string) []string {
+	return []string{"--dump-single-json", "--flat-playlist", "--playlist-end", "200", "--", url}
+}
+
 func getInfo(_ *download.Downloader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		url := r.URL.Query().Get("url")
@@ -84,8 +91,7 @@ func getInfo(_ *download.Downloader) http.HandlerFunc {
 			}
 		}
 
-		args := []string{"--dump-single-json", "--flat-playlist", "--playlist-end", "200", url}
-		cmd := exec.Command("yt-dlp", args...)
+		cmd := exec.Command("yt-dlp", infoArgs(url)...) //nolint:gosec // G204 - "yt-dlp" is a fixed binary and the URL is after the `--` separator (see infoArgs)
 		out, err := cmd.Output()
 		if err != nil {
 			sendJSONError(w, "failed to fetch info", http.StatusInternalServerError)
