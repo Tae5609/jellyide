@@ -1,0 +1,14 @@
+{
+    "format": {
+        "filename": "/music/Artist/Album/01 Song.flac",
+        "nb_streams": 1,
+        "format_name": "flac",
+        "duration": "213.456",
+        "bit_rate": "1007354",
+        "tags": {
+            "title": "Track One",
+            "artist": "Tagged Artist",
+            "album": "Tagged Album"
+        }
+    }
+}
