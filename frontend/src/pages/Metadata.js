@@ -197,27 +197,52 @@ export default function Metadata() {
 
   if (!albumId) return null;
 
+  const pendingCount = Object.keys(modifications).length;
+
+  const renderTrackEditor = (track, mod, hasMod) => {
+    if (editingTrackId === track.id) {
+      return (
+        <input
+          className="track-new-input"
+          autoFocus
+          value={hasMod ? mod : track.title}
+          onChange={(e) => handleManualEdit(track.id, e.target.value)}
+          onBlur={() => setEditingTrackId(null)}
+          onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)}
+        />
+      );
+    }
+    return (
+      <div
+        className={`track-new ${hasMod ? 'modified' : ''}`}
+        onClick={() => setEditingTrackId(track.id)}
+      >
+        {hasMod ? mod : "(click to edit)"}
+      </div>
+    );
+  };
+
   return (
-    <div style={{ display: 'flex', height: '100%', flexDirection: 'column' }}>
+    <div className="metadata-layout">
       {/* Header */}
-      <div style={{ padding: '20px 32px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div className="metadata-header">
         <button className="btn-secondary" onClick={() => navigate(`/library/${artistId}`)}>← Back</button>
-        <div style={{ flex: 1 }}>
+        <div className="metadata-header-main">
           {isEditingAlbum ? (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="album-edit-row">
               <input 
+                className="album-title-input"
                 autoFocus
                 value={newAlbumTitle} 
                 onChange={e => setNewAlbumTitle(e.target.value)} 
                 onKeyDown={e => e.key === 'Enter' && handleRenameAlbum()}
-                style={{ fontSize: 18, fontWeight: 600, padding: '4px 8px' }}
               />
-              <button className="btn-primary" onClick={handleRenameAlbum} style={{ padding: '6px 12px' }}>Save</button>
-              <button className="btn-secondary" onClick={() => setIsEditingAlbum(false)} style={{ padding: '6px 12px' }}>Cancel</button>
+              <button className="btn-primary btn-sm" onClick={handleRenameAlbum}>Save</button>
+              <button className="btn-secondary btn-sm" onClick={() => setIsEditingAlbum(false)}>Cancel</button>
             </div>
           ) : (
             <h2 
-              style={{ margin: 0, fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+              className="album-title-edit"
               onClick={() => setIsEditingAlbum(true)}
               title="Click to rename album"
             >
@@ -225,87 +250,97 @@ export default function Metadata() {
               <span style={{ fontSize: 12, opacity: 0.5 }}>✎</span>
             </h2>
           )}
-          <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: 13 }}>{album?.artist} · {tracks.length} tracks</p>
+          <p className="metadata-sub">{album?.artist} · {tracks.length} tracks</p>
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div className="metadata-actions">
           <button className="btn-secondary" style={{ color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.2)' }} onClick={handleDeleteAlbum}>
             Delete Album
           </button>
           <button 
             className="btn-primary" 
             onClick={applyChanges} 
-            disabled={Object.keys(modifications).length === 0 || applying}
+            disabled={pendingCount === 0 || applying}
           >
-            {applying ? 'Applying...' : `Apply Changes (${Object.keys(modifications).length})`}
+            {applying ? 'Applying...' : `Apply Changes (${pendingCount})`}
           </button>
         </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div className="metadata-body">
         {/* Track List */}
-        <div style={{ flex: 1, padding: 32, overflowY: 'auto' }}>
-          <div className="card" style={{ padding: 0 }}>
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 40, textAlign: 'center' }}>#</th>
-                  <th style={{ width: '45%' }}>Title</th>
-                  <th>New Title</th>
-                  <th style={{ width: 50, textAlign: 'center' }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {tracks.map((track, idx) => {
-                  const mod = modifications[track.id];
-                  const hasMod = mod !== undefined;
-                  return (
-                    <tr key={track.id}>
-                      <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{idx + 1}</td>
-                      <td style={{ textDecoration: hasMod ? 'line-through' : 'none', color: hasMod ? 'var(--text-muted)' : 'inherit' }}>
-                        {track.title}
-                      </td>
-                      <td onClick={() => setEditingTrackId(track.id)}>
-                        {editingTrackId === track.id ? (
-                          <input
-                            autoFocus
-                            style={{ width: '100%' }}
-                            value={hasMod ? mod : track.title}
-                            onChange={(e) => handleManualEdit(track.id, e.target.value)}
-                            onBlur={() => setEditingTrackId(null)}
-                            onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)}
-                          />
-                        ) : (
-                          <div style={{ 
-                            padding: '4px 8px', 
-                            color: hasMod ? 'var(--accent)' : 'var(--text-muted)',
-                            fontWeight: hasMod ? 600 : 400,
-                            cursor: 'text'
-                          }}>
-                            {hasMod ? mod : "(click to edit)"}
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <button 
-                          onClick={() => handleDeleteTrack(track.id)} 
-                          style={{ color: 'var(--danger)', opacity: 0.6, background: 'none', border: 'none', cursor: 'pointer' }}
-                          title="Delete track from DB"
-                        >
-                          <TrashIcon />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        <div className="metadata-tracks">
+          <div className="card card-flush">
+            <div className="table-scroll metadata-table-wrap">
+              <table className="metadata-table">
+                <thead>
+                  <tr>
+                    <th className="th-track-idx">#</th>
+                    <th className="th-track-title">Title</th>
+                    <th>New Title</th>
+                    <th className="th-track-actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tracks.map((track, idx) => {
+                    const mod = modifications[track.id];
+                    const hasMod = mod !== undefined;
+                    return (
+                      <tr key={track.id}>
+                        <td className="td-center-muted">{idx + 1}</td>
+                        <td style={{ textDecoration: hasMod ? 'line-through' : 'none', color: hasMod ? 'var(--text-muted)' : 'inherit' }}>
+                          {track.title}
+                        </td>
+                        <td onClick={() => setEditingTrackId(track.id)}>
+                          {renderTrackEditor(track, mod, hasMod)}
+                        </td>
+                        <td className="td-center">
+                          <button 
+                            className="icon-btn"
+                            onClick={() => handleDeleteTrack(track.id)} 
+                            title="Delete track from DB"
+                          >
+                            <TrashIcon />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="track-cards">
+              {tracks.map((track, idx) => {
+                const mod = modifications[track.id];
+                const hasMod = mod !== undefined;
+                return (
+                  <div className="track-card" key={track.id}>
+                    <div className="track-card-head">
+                      <span className="track-idx">{idx + 1}</span>
+                      <button
+                        className="icon-btn"
+                        onClick={() => handleDeleteTrack(track.id)}
+                        title="Delete track from DB"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                    <div className={`track-old ${hasMod ? 'modified' : ''}`}>
+                      {track.title}
+                    </div>
+                    <div onClick={() => setEditingTrackId(track.id)}>
+                      {renderTrackEditor(track, mod, hasMod)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
         {/* Bulk Actions Panel */}
-        <div style={{ width: 340, backgroundColor: 'var(--bg-sidebar)', borderLeft: '1px solid var(--border)', padding: 24, overflowY: 'auto' }}>
-          <h3 style={{ fontSize: 13, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 20 }}>Bulk Edit</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="bulk-panel">
+          <h3 className="bulk-heading">Bulk Edit</h3>
+          <div className="bulk-edit-form">
             <select value={action} onChange={e => setAction(e.target.value)}>
               <option value="replace">Replace Text</option>
               <option value="prefix">Add Prefix</option>
@@ -319,20 +354,19 @@ export default function Metadata() {
             <button className="btn-secondary" onClick={() => handleBulkPreview()}>Run Transformation</button>
           </div>
 
-          <div style={{ marginTop: 40 }}>
-            <h3 style={{ fontSize: 12, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 16 }}>Cleanup Suggestions</h3>
+          <div className="cleanup-section">
+            <h3 className="cleanup-heading">Cleanup Suggestions</h3>
             
             {!analysis ? (
-              <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Analyzing album patterns...</p>
+              <p className="bulk-analyzing">Analyzing album patterns...</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="suggestion-list">
                 {analysis.suggestions?.map((p, i) => (
-                  <div key={i} style={{ backgroundColor: 'var(--bg-hover)', padding: '12px 16px', borderRadius: 8, border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: '#fff' }}>"{p.text}"</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Found in {p.count} tracks</div>
+                  <div className="suggestion" key={i}>
+                    <div className="suggestion-text">"{p.text}"</div>
+                    <div className="suggestion-count">Found in {p.count} tracks</div>
                     <button 
-                      className="btn-secondary" 
-                      style={{ width: '100%', fontSize: 11, padding: '6px', backgroundColor: 'rgba(255,255,255,0.05)' }}
+                      className="btn-secondary suggestion-btn"
                       onClick={() => {
                         setAction('replace');
                         setTarget(p.text);
@@ -346,12 +380,23 @@ export default function Metadata() {
                 ))}
                 
                 {(!analysis.suggestions?.length) && (
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>No significant patterns detected.</p>
+                  <p className="suggestion-empty">No significant patterns detected.</p>
                 )}
               </div>
             )}
           </div>
         </div>
+      </div>
+
+      {/* Sticky action bar (phones only) keeps Apply reachable */}
+      <div className="metadata-actionbar">
+        <button
+          className="btn-primary"
+          onClick={applyChanges}
+          disabled={pendingCount === 0 || applying}
+        >
+          {applying ? 'Applying...' : `Apply Changes (${pendingCount})`}
+        </button>
       </div>
     </div>
   );

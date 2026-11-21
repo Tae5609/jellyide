@@ -108,14 +108,14 @@ export default function Downloads() {
 
   return (
     <div className="page-container fade-in-up">
-      <div style={{ marginBottom: 32 }}>
-        <h2 style={{ margin: '0 0 8px 0', fontSize: 28, letterSpacing: '-0.03em' }}>Downloads</h2>
-        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 15 }}>Fetch music directly from YouTube</p>
+      <div className="page-header">
+        <h2 className="page-title">Downloads</h2>
+        <p className="page-subtitle">Fetch music directly from YouTube</p>
       </div>
       
-      <div className="card" style={{ marginBottom: 24, display: 'flex', gap: 12 }}>
+      <div className="card url-form">
         <input 
-          style={{ flex: 1 }}
+          className="url-input"
           placeholder="Paste YouTube Video or Playlist URL..."
           value={url}
           onChange={e => setUrl(e.target.value)}
@@ -127,28 +127,27 @@ export default function Downloads() {
         </div>
 
         {playlist && (
-        <div className="card fade-in-up" style={{ marginBottom: 24, display: 'flex', gap: 12, alignItems: 'flex-end', backgroundColor: 'var(--bg-sidebar)', padding: '16px 24px' }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>Bulk Artist Name</label>
+        <div className="card fade-in-up bulk-bar">
+          <div className="bulk-field">
+            <label className="field-label">Bulk Artist Name</label>
             <input 
+              className="field-input"
               placeholder="Common artist name..." 
               value={bulkArtist} 
               onChange={e => setBulkArtist(e.target.value)}
-              style={{ width: '100%', height: 38 }}
             />
           </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase' }}>Bulk Album Name</label>
+          <div className="bulk-field">
+            <label className="field-label">Bulk Album Name</label>
             <input 
+              className="field-input"
               placeholder="Common album name..." 
               value={bulkAlbum} 
               onChange={e => setBulkAlbum(e.target.value)}
-              style={{ width: '100%', height: 38 }}
             />
           </div>
           <button 
-            className="btn-secondary" 
-            style={{ height: 38, whiteSpace: 'nowrap' }}
+            className="btn-secondary bulk-apply"
             onClick={applyBulkEdit}
             disabled={selected.size === 0 || (!bulkArtist && !bulkAlbum)}
           >
@@ -158,11 +157,11 @@ export default function Downloads() {
         )}
 
         {playlist && (
-        <div className="card fade-in-up" style={{ padding: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 24px 16px', borderBottom: '1px solid var(--border)' }}>
+        <div className="card card-flush fade-in-up">
+          <div className="playlist-head">
             <div>
-              <h3 style={{ margin: 0, fontSize: 18 }}>{playlist.title}</h3>
-              <p style={{ color: 'var(--text-muted)', margin: '4px 0 0 0', fontSize: 14 }}>
+              <h3 className="playlist-title">{playlist.title}</h3>
+              <p className="playlist-count">
                 {playlist.items.length} tracks detected
               </p>
             </div>
@@ -171,59 +170,61 @@ export default function Downloads() {
             </button>
           </div>
 
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 40, textAlign: 'center' }}>
-                  <input 
-                    type="checkbox" 
-                    checked={selected.size === playlist.items.length}
-                    onChange={() => {
-                      if (selected.size === playlist.items.length) setSelected(new Set());
-                      else setSelected(new Set(playlist.items.map(i => i.id)));
-                    }}
-                  />
-                </th>
-                <th>Track Name</th>
-                <th style={{ width: 100, textAlign: 'center' }}>Duration</th>
-                <th>Artist (Target Folder)</th>
-                <th>Album (Target Subfolder)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {playlist.items.map(item => (
-                <tr key={item.id} style={{ opacity: selected.has(item.id) ? 1 : 0.5, transition: 'opacity var(--transition-fast)' }}>
-                  <td style={{ textAlign: 'center' }}>
+          <div className="table-scroll">
+            <table className="playlist-table">
+              <thead>
+                <tr>
+                  <th className="th-select">
                     <input 
                       type="checkbox" 
-                      checked={selected.has(item.id)}
-                      onChange={() => toggleSelect(item.id)}
+                      checked={selected.size === playlist.items.length}
+                      onChange={() => {
+                        if (selected.size === playlist.items.length) setSelected(new Set());
+                        else setSelected(new Set(playlist.items.map(i => i.id)));
+                      }}
                     />
-                  </td>
-                  <td>
-                    <span style={{ fontSize: 14, fontWeight: 500 }}>{item.title}</span>
-                  </td>
-                  <td style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                    {formatDuration(item.duration)}
-                  </td>
-                  <td>
-                    <input 
-                      value={artists[item.id] || ''}
-                      onChange={e => setArtists({...artists, [item.id]: e.target.value})}
-                      style={{ width: '100%' }}
-                    />
-                  </td>
-                  <td>
-                    <input 
-                      value={albums[item.id] || ''}
-                      onChange={e => setAlbums({...albums, [item.id]: e.target.value})}
-                      style={{ width: '100%' }}
-                    />
-                  </td>
+                  </th>
+                  <th>Track Name</th>
+                  <th className="th-duration">Duration</th>
+                  <th>Artist (Target Folder)</th>
+                  <th>Album (Target Subfolder)</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {playlist.items.map(item => (
+                  <tr key={item.id} style={{ opacity: selected.has(item.id) ? 1 : 0.5, transition: 'opacity var(--transition-fast)' }}>
+                    <td className="td-center">
+                      <input 
+                        type="checkbox" 
+                        checked={selected.has(item.id)}
+                        onChange={() => toggleSelect(item.id)}
+                      />
+                    </td>
+                    <td>
+                      <span className="track-name">{item.title}</span>
+                    </td>
+                    <td className="td-duration">
+                      {formatDuration(item.duration)}
+                    </td>
+                    <td>
+                      <input 
+                        className="cell-input"
+                        value={artists[item.id] || ''}
+                        onChange={e => setArtists({...artists, [item.id]: e.target.value})}
+                      />
+                    </td>
+                    <td>
+                      <input 
+                        className="cell-input"
+                        value={albums[item.id] || ''}
+                        onChange={e => setAlbums({...albums, [item.id]: e.target.value})}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
