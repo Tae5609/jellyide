@@ -1,18 +1,21 @@
+// Package api wires the HTTP routes of the JellyIDE backend onto a
+// gorilla/mux router.
 package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os/exec"
 	"strings"
+
+	"github.com/gorilla/mux"
 
 	"yt-scraper/internal/download"
 	"yt-scraper/internal/jobs"
 	"yt-scraper/internal/library"
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/scanner"
-
-	"github.com/gorilla/mux"
 )
 
 // RegisterRoutes registers all API routes to the provided router.
@@ -45,13 +48,24 @@ func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service,
 	r.HandleFunc("/metadata/apply", applyMetadata(meta)).Methods("POST")
 }
 
+// writeJSON encodes v as the JSON response body. Write failures (e.g. the
+// client went away) are logged; there is nothing left to do for them.
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("api: writing response: %v", err)
+	}
+}
+
 func sendJSONError(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		log.Printf("api: writing error response: %v", err)
+	}
 }
 
-func getInfo(d *download.Downloader) http.HandlerFunc {
+func getInfo(_ *download.Downloader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		url := r.URL.Query().Get("url")
 		if url == "" {
@@ -78,7 +92,9 @@ func getInfo(d *download.Downloader) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(out)
+		if _, err := w.Write(out); err != nil {
+			log.Printf("api: writing info response: %v", err)
+		}
 	}
 }
 
@@ -101,8 +117,7 @@ func queueDownloads(d *download.Downloader) http.HandlerFunc {
 			jobIDs = append(jobIDs, j.ID)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, map[string]interface{}{
 			"queued":  len(jobIDs),
 			"job_ids": jobIDs,
 		})
@@ -110,28 +125,29 @@ func queueDownloads(d *download.Downloader) http.HandlerFunc {
 }
 
 func getJobs(jm *jobs.Manager) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		jobsList, err := jm.GetAllJobs()
 		if err != nil {
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(jobsList)
+		writeJSON(w, jobsList)
 	}
 }
 
 func clearJobs(jm *jobs.Manager) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		jm.ClearCompleted()
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if err := jm.ClearCompleted(); err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
 func getConfig(d *download.Downloader) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]interface{}{
 			"concurrent_limit": d.GetLimit(),
 			"proxy":            d.GetProxy(),
 		})
@@ -153,14 +169,13 @@ func setConfig(d *download.Downloader) http.HandlerFunc {
 
 // Library Handlers
 func getArtists(lib *library.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		res, err := lib.GetArtists()
 		if err != nil {
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(res)
+		writeJSON(w, res)
 	}
 }
 
@@ -173,8 +188,7 @@ func getAlbums(lib *library.Service) http.HandlerFunc {
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(res)
+		writeJSON(w, res)
 	}
 }
 
@@ -187,8 +201,7 @@ func getTracks(lib *library.Service) http.HandlerFunc {
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(res)
+		writeJSON(w, res)
 	}
 }
 
@@ -201,8 +214,7 @@ func getAlbum(lib *library.Service) http.HandlerFunc {
 			sendJSONError(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(res)
+		writeJSON(w, res)
 	}
 }
 
@@ -253,7 +265,7 @@ func deleteTrack(lib *library.Service) http.HandlerFunc {
 }
 
 func triggerScan(s *scanner.Scanner) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		err := s.Scan()
 		if err != nil {
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
@@ -273,8 +285,7 @@ func analyzeAlbum(meta *metadata.Service) http.HandlerFunc {
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(res)
+		writeJSON(w, res)
 	}
 }
 
@@ -290,8 +301,7 @@ func previewMetadata(meta *metadata.Service) http.HandlerFunc {
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(res)
+		writeJSON(w, res)
 	}
 }
 
