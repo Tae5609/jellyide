@@ -62,21 +62,25 @@ func NewDB(dbPath string) (*DB, error) {
 
 	read, err := openConn(dbPath)
 	if err != nil {
-		write.Close()
+		if cerr := write.Close(); cerr != nil {
+			log.Printf("db: closing write pool after open error: %v", cerr)
+		}
 		return nil, fmt.Errorf("open read conn: %w", err)
 	}
 	// WAL mode allows many concurrent readers, each with their own snapshot.
 	read.SetMaxOpenConns(4)
 	read.SetMaxIdleConns(4)
 
-	db := &DB{DB: read, write: write}
+	database := &DB{DB: read, write: write}
 
 	if err := migrate(write); err != nil {
-		db.Close()
+		if cerr := database.Close(); cerr != nil {
+			log.Printf("db: closing pools after migration error: %v", cerr)
+		}
 		return nil, err
 	}
 
-	return db, nil
+	return database, nil
 }
 
 // openConn opens a SQLite connection and applies all required pragmas.
@@ -102,7 +106,9 @@ func openConn(dbPath string) (*sqlx.DB, error) {
 
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {
-			db.Close()
+			if cerr := db.Close(); cerr != nil {
+				log.Printf("db: closing conn after pragma error: %v", cerr)
+			}
 			return nil, fmt.Errorf("pragma %q: %w", p, err)
 		}
 	}
