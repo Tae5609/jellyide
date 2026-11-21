@@ -2,6 +2,8 @@
 
 Repo: JellyIDE, Go backend `backend/` (module `yt-scraper`). The auth core is merged in `backend/internal/auth/`. Read every file there first, plus `backend/main.go`. Use the exported helpers: `StartSession`, `FindOrCreateExternalUser`, `SetSAMLProvider`, `Config()`.
 
+Follow `docs/plan/CONVENTIONS.md` (commit, PR and quality-gate rules).
+
 ## Do
 1. `cd backend && go get github.com/crewjam/saml@latest`.
 2. Add `backend/internal/auth/saml.go`:
@@ -55,4 +57,4 @@ Repo: JellyIDE, Go backend `backend/` (module `yt-scraper`). The auth core is me
 ```
 cd backend && go mod tidy && gofmt -l . && go vet ./... && go build ./... && go test ./...
 ```
-`gofmt -l` prints nothing. Commit: `add SAML 2.0 SP login`.
+`gofmt -l` prints nothing. Commit: `feat(saml): add SAML 2.0 service provider login`.

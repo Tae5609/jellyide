@@ -2,6 +2,8 @@
 
 Repo: JellyIDE, Go backend `backend/` (module `yt-scraper`). The auth core is merged in `backend/internal/auth/`. Read every file there first, especially `service.go`, `session.go`, `store.go`, `handlers.go`, `middleware.go`, plus `backend/main.go`. Use the exported helpers: `StartSession`, `FindOrCreateExternalUser`, `SetOIDCProvider`, `Config()`.
 
+Follow `docs/plan/CONVENTIONS.md` (commit, PR and quality-gate rules).
+
 ## Do
 1. `cd backend && go get github.com/coreos/go-oidc/v3/oidc golang.org/x/oauth2`.
 2. Add `backend/internal/auth/oidc.go`:
@@ -31,4 +33,4 @@ Repo: JellyIDE, Go backend `backend/` (module `yt-scraper`). The auth core is me
 ```
 cd backend && go mod tidy && gofmt -l . && go vet ./... && go build ./... && go test ./...
 ```
-`gofmt -l` prints nothing. Commit: `add OIDC login (auth code + PKCE)`.
+`gofmt -l` prints nothing. Commit: `feat(oidc): add OIDC login with auth code and PKCE`.
