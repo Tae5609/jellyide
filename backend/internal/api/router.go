@@ -171,7 +171,10 @@ func setConfig(d *download.Downloader) http.HandlerFunc {
 			ConcurrentLimit int    `json:"concurrent_limit"`
 			Proxy           string `json:"proxy"`
 		}
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
 		d.SetLimit(req.ConcurrentLimit)
 		d.SetProxy(req.Proxy)
 		w.WriteHeader(http.StatusOK)
