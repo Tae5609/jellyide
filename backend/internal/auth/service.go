@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	samlsp "github.com/crewjam/saml/samlsp"
+
 	"yt-scraper/internal/db"
 )
 
@@ -17,6 +19,7 @@ type Service struct {
 	providers *providerState
 	limiter   *loginLimiter
 	oidc      *oidcState // set by EnableOIDC at startup; non-nil when OIDC is on
+	samlSP    *samlsp.Middleware
 }
 
 // NewService builds the auth service and bootstraps the admin account when
