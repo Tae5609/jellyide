@@ -1,0 +1,38 @@
+version: "2"
+
+# Pinned tooling: golangci-lint v2.15.0 (same pin in the Makefile and CI).
+#
+# Exclusion policy (T7 brief): exclude a finding only with a written reason,
+# inline `//nolint:<linter> // reason`, or in config for test files only.
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - revive
+    - staticcheck
+    - unused
+  exclusions:
+    rules:
+      # Test fixture passwords in auth_test.go trigger gosec G101 (hardcoded
+      # credentials); they are not real secrets. Test files only, per policy.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - yt-scraper
