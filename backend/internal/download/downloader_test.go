@@ -244,6 +244,43 @@ func TestProcessDownloadFailure(t *testing.T) {
 	}
 }
 
+// TestProcessDownloadMkdirFailure is a regression test for the MkdirAll
+// error handling: when the output directory cannot be created (here because
+// the artist path is a regular file), the job must fail immediately with a
+// clear message instead of dying inside yt-dlp.
+func TestProcessDownloadMkdirFailure(t *testing.T) {
+	d, jm, _, dir := newTestDownloader(t)
+
+	// Block the artist directory with a regular file.
+	if err := os.WriteFile(filepath.Join(dir, "Artist"), []byte("blocker"), 0o600); err != nil {
+		t.Fatalf("block artist path: %v", err)
+	}
+
+	job, err := jm.CreateJob(jobs.TypeDownload, Details{
+		VideoID: "dQw4w9WgXcQ",
+		Title:   "Cool Song",
+		Artist:  "Artist",
+		Album:   "Album",
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	d.processDownload(job.ID)
+
+	got, err := jm.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != jobs.StatusFailed {
+		t.Fatalf("status = %s, want failed (error: %s)", got.Status, got.Error)
+	}
+	const wantPrefix = "failed to create output directory: "
+	if !strings.HasPrefix(got.Error, wantPrefix) || got.Error == wantPrefix {
+		t.Fatalf("error = %q, want prefix %q with the underlying cause", got.Error, wantPrefix)
+	}
+}
+
 func TestProcessDownloadInvalidDetails(t *testing.T) {
 	d, jm, database, _ := newTestDownloader(t)
 
