@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useModal } from '../components/ModalContext';
-
-const API = window.location.origin + '/api';
+import { apiFetch } from '../api';
 
 export default function Settings() {
   const { showAlert } = useModal();
@@ -10,7 +9,7 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/config`)
+    apiFetch('/config')
       .then(r => r.json())
       .then(data => {
         setLimit(data.concurrent_limit || 2);
@@ -21,9 +20,8 @@ export default function Settings() {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API}/config`, {
+      const res = await apiFetch('/config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ concurrent_limit: parseInt(limit), proxy })
       });
       if (res.ok) showAlert("Settings Saved", "Your configuration has been updated successfully.");

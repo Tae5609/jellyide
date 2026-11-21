@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useModal } from '../components/ModalContext';
-
-const API = window.location.origin + '/api';
+import { apiFetch } from '../api';
 
 export default function Jobs() {
   const { showAlert } = useModal();
@@ -9,7 +8,7 @@ export default function Jobs() {
 
   const fetchJobs = async () => {
     try {
-      const res = await fetch(`${API}/jobs`);
+      const res = await apiFetch('/jobs');
       const data = await res.json();
       setJobs(data || []);
     } catch (err) {
@@ -25,7 +24,7 @@ export default function Jobs() {
 
   const clearJobs = async () => {
     try {
-      await fetch(`${API}/jobs/clear`, { method: 'POST' });
+      await apiFetch('/jobs/clear', { method: 'POST' });
       fetchJobs();
     } catch (err) {
       showAlert("Error", err.message);

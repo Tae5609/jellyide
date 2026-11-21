@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useModal } from '../components/ModalContext';
-
-const API = window.location.origin + '/api';
+import { apiFetch } from '../api';
 
 export default function Downloads() {
   const { showAlert } = useModal();
@@ -27,7 +26,7 @@ export default function Downloads() {
     if (!url) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API}/info?url=${encodeURIComponent(url)}`);
+      const res = await apiFetch(`/info?url=${encodeURIComponent(url)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       
@@ -86,9 +85,8 @@ export default function Downloads() {
 
     setQueueing(true);
     try {
-      const res = await fetch(`${API}/queue`, {
+      const res = await apiFetch('/queue', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(items)
       });
       const data = await res.json();
