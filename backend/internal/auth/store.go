@@ -107,11 +107,10 @@ func (s *Service) FindOrCreateExternalUser(provider, subject, username, email, d
 	if name == "" {
 		name = subject
 	}
-	if _, err := s.GetUserByUsername(name); errors.Is(err, ErrNoUser) {
-		// Username free, use as-is.
-	} else if err != nil {
-		return nil, err
-	} else {
+	if _, err := s.GetUserByUsername(name); !errors.Is(err, ErrNoUser) {
+		if err != nil {
+			return nil, err
+		}
 		// Username taken: append the provider to disambiguate.
 		name = username + "-" + provider
 	}

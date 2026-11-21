@@ -1,3 +1,4 @@
+// Package auth — handlers, middleware and session tests.
 package auth
 
 import (
@@ -33,7 +34,7 @@ func newTestService(t *testing.T, cfg Config) *Service {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() { _ = database.Close() })
 
 	svc, err := NewService(cfg, database)
 	if err != nil {
@@ -48,7 +49,7 @@ func newTestHandler(s *Service) http.Handler {
 	r := mux.NewRouter()
 	apiSub := r.PathPrefix("/api").Subrouter()
 	s.RegisterRoutes(apiSub)
-	apiSub.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+	apiSub.HandleFunc("/jobs", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, []string{})
 	})
 	return s.Middleware(r)
