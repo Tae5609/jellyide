@@ -3,10 +3,19 @@
 The product owner triages this list. Agents append bugs they find out of scope here, and T12 (backend) or follow-up tasks fix them.
 
 ## Known (found during planning)
-- [ ] `backend/internal/api/router.go` getInfo: the user `url` is passed to `yt-dlp` as a positional arg with no `--` separator, so a value starting with `-` is parsed as a yt-dlp option (option injection, potentially `--exec`). Security.
-- [ ] `backend/internal/api/router.go` setConfig: JSON decode errors are ignored, so a bad body silently sets limit 0 and proxy "".
+- [x] `backend/internal/api/router.go` getInfo: the user `url` is passed to `yt-dlp` as a positional arg with no `--` separator, so a value starting with `-` is parsed as a yt-dlp option (option injection, potentially `--exec`). Security. — FIXED in T7 (`infoArgs()` with `--` separator, `TestInfoArgsProtectsURL`)
+- [x] `backend/internal/api/router.go` setConfig: JSON decode errors are ignored, so a bad body silently sets limit 0 and proxy "". — FIXED in T7 (400 + previous values kept, `TestSetConfigInvalidJSON`)
+- [ ] `backend/internal/api/router.go` getInfo: yt-dlp still fetches the user-supplied URL (outbound request to arbitrary host) — SSRF surface, pre-existing; the option-injection fix does not cover this — decide on a host allowlist or proxy-only mode (found in T7 review)
 - [ ] `backend/internal/library/service.go` RenameAlbum / `sanitizeFilename`: verify that a new title cannot escape the music dir (`..`, `/`, absolute paths) and that renaming onto an existing directory is handled.
 - [ ] `backend/main.go`: `/media/` serves the whole music dir including `jellyide.db` (the database, which will hold password hashes and sessions). Must be blocked.
-- [ ] `backend/main.go`: CORS `AllowedOrigins: *` (removed by T1; verify).
-- [ ] `backend/main.go` SPA handler: `filepath.Join("./frontend/build", path)`. Confirm there is no traversal, and serve 404 for missing assets with a file extension instead of index.html.
-- [ ] `backend/update_metadata.py`: bare `except:`, and only title/album are supported (extended in T10).
+- [x] `backend/main.go`: CORS `AllowedOrigins: *` (removed by T1; verify). — FIXED in T1 (cors middleware deleted, SPA is same-origin)
+- [ ] `backend/main.go` SPA handler: `filepath.Join("./frontend/build", path)`. `..` paths are now rejected (T7, gosec G703); remaining: serve 404 for missing assets with a file extension instead of index.html.
+- [x] `backend/update_metadata.py`: bare `except:` — FIXED in T7 (`except ID3NoHeaderError` + ruff). Still title/album only; field support extends in T10.
+- [ ] `frontend/src/pages/Library.js:46` — scan and error handling use blocking `alert()`/`window.confirm()` (also `frontend/src/pages/Metadata.js:75,80,91,96,110,178,181`) instead of the existing `ModalContext` used by Downloads/Jobs/Settings — inconsistent UX, modal-style flow unavailable on those flows (found in T2)
+- [ ] `frontend/src/pages/Library.js:13` — `fetchArtists` runs once on mount with empty deps and is never re-fetched after a scan completes — newly scanned artists do not appear until page reload (found in T2)
+- [ ] `backend/internal/auth/store.go:127` — `FindOrCreateExternalUser` collision branch appends `-<provider>` to the `username` param instead of the resolved name; when username is empty and the subject-derived name is already taken the result is e.g. `-oidc`, and a second such user violates `UNIQUE(username)` — fix before T4/T5 ship (found in T1 review)
+- [ ] `backend/internal/auth/handlers.go:249` — login rate limiter keys on `RemoteAddr` only; behind a reverse proxy all clients share one bucket (shared lockout) — key on `X-Forwarded-For` first hop when proxying is configured (found in T1 review)
+- [ ] `backend/internal/auth/handlers.go:169` — public `/api/auth/login` is exempt from the CSRF check, so a cross-site login CSRF can pin a victim's browser onto an attacker account; low severity (victim still needs the session cookie to be useful to the attacker) — consider a login-CSRF token (found in T1 review)
+- [ ] `backend/main.go:95` — SPA handler: when `os.Stat` fails with a non-"not exist" error (e.g. permission error), `info` is nil and `info.IsDir()` panics, crashing the server — guard with `err == nil && info.IsDir()` and serve 404/index for stat failures (found in T7)
+- [ ] `backend/internal/metadata/service.go:136` — `isJunk` uses byte length (`len`) while `findSignificantPatterns` slices by runes: a single CJK rune (3 bytes) passes the `len < 3` check as "not junk" while a 2-letter ASCII pair is junk — inconsistent junk detection for non-ASCII titles (found in T7)
+- [ ] `backend/internal/api/router.go:235` — renameAlbum/deleteAlbum/deleteTrack return 500 when the referenced album/track does not exist, while getAlbum returns 404 for the same condition — inconsistent status codes, frontend cannot distinguish "not found" from server errors (found in T7)
