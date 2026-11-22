@@ -161,6 +161,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -170,6 +171,23 @@ input:focus, select:focus, textarea:focus {
   font-weight: 500;
   font-size: 14px;
   transition: all var(--transition-fast);
+}
+
+/* Pending-approval count on the admin-only Users nav item. */
+.nav-badge {
+  position: absolute;
+  top: 5px;
+  right: 10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background-color: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
 }
 
 .nav-item:hover {
@@ -948,6 +966,170 @@ input:focus, select:focus, textarea:focus {
   font-size: 15px;
 }
 
+/* Users admin page */
+.badge.user-status-active {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--success);
+}
+
+.badge.user-status-pending {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.badge.user-status-disabled {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+.user-username {
+  font-weight: 600;
+}
+
+.user-display-name {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.user-self-tag {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.user-last-login {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn-small {
+  padding: 6px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--text-main);
+  font-size: 12px;
+}
+
+.btn-small:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+}
+
+.btn-small.primary {
+  color: var(--accent);
+  border-color: rgba(129, 140, 248, 0.4);
+}
+
+.btn-small.primary:hover:not(:disabled) {
+  background-color: rgba(129, 140, 248, 0.1);
+}
+
+.btn-small.danger {
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.btn-small.danger:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+/* Cards render instead of the table on small screens. */
+.user-cards {
+  display: none;
+}
+
+.user-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+
+.user-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.user-card-username {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.user-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+/* Settings: registration mode options */
+.registration-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.registration-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.registration-option.selected {
+  border-color: var(--accent);
+  background-color: rgba(129, 140, 248, 0.06);
+}
+
+.registration-option input[type='radio'] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.registration-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.registration-option-label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.registration-option-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.settings-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings-checkbox-label input[type='checkbox'] {
+  flex-shrink: 0;
+}
+
 .auth-loader {
   min-height: 100vh;
   min-height: 100dvh;
@@ -1366,6 +1548,18 @@ tr:hover td {
 
   .jobs-table-wrap {
     display: none;
+  }
+
+  /* Users: stacked cards */
+  .users-table-wrap {
+    display: none;
+  }
+
+  .user-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
   }
 
   /* Library: stacked panes */
