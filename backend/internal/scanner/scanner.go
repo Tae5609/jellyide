@@ -183,6 +183,9 @@ func (s *Scanner) Scan() error {
 				return nil //nolint:nilerr // walk param error is intentionally swallowed
 			}
 			if info.IsDir() {
+				if info.Name() == ".jellyide" {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 

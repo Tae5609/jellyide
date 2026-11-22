@@ -366,3 +366,29 @@ func TestDetectCover(t *testing.T) {
 		t.Fatalf("cover = %q, want /media/A/C/photo.PNG", album.CoverArt)
 	}
 }
+
+// TestScanSkipsJellyideDir verifies that files inside the .jellyide directory
+// (such as the managed yt-dlp binary) are skipped during scanning.
+func TestScanSkipsJellyideDir(t *testing.T) {
+	s, jm, _, dir := newTestScanner(t)
+
+	jellyDir := filepath.Join(dir, ".jellyide", "bin")
+	if err := os.MkdirAll(jellyDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(jellyDir, "yt-dlp"), []byte("bin"), 0o700); err != nil {
+		t.Fatalf("write yt-dlp: %v", err)
+	}
+
+	if err := s.Scan(); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	all, err := jm.GetAllJobs()
+	if err != nil {
+		t.Fatalf("GetAllJobs: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("jobs = %d, want 1", len(all))
+	}
+	waitForJobStatus(t, jm, all[0].ID, jobs.StatusCompleted)
+}
