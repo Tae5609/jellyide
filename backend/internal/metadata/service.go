@@ -6,7 +6,6 @@ package metadata
 import (
 	"log"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -309,17 +308,23 @@ func (s *Service) ApplyChanges(previews []PreviewResponse) error {
 			continue
 		}
 
-		// 2. Physically rename the file on disk
-		newFilename := sanitizeFilename(p.NewTitle) + filepath.Ext(track.Path)
-		newPath := filepath.Join(filepath.Dir(track.Path), newFilename)
+		// 2. Physically rename the file on disk. A taken target is
+		// auto-numbered " (2)", " (3)", ... instead of being overwritten.
+		base := sanitizeFilename(p.NewTitle)
+		ext := filepath.Ext(track.Path)
+		newPath := filepath.Join(filepath.Dir(track.Path), base+ext)
 
 		if track.Path != newPath {
-			if err := os.Rename(track.Path, newPath); err != nil {
+			finalPath, suffixed, err := renameFileNoOverwrite(track.Path, filepath.Dir(track.Path), base, ext)
+			if err != nil {
 				log.Printf("Metadata: Failed to rename file from %s to %s: %v", track.Path, newPath, err)
 				// Even if rename fails, we already updated the metadata in-place
 			} else {
+				if suffixed {
+					log.Printf("Metadata: name for %q taken; track %s file renamed to %q", p.NewTitle, p.TrackID, filepath.Base(finalPath))
+				}
 				// 3. Update Database with the new path AND new title
-				_, err = s.db.Exec("UPDATE tracks SET title = ?, path = ? WHERE id = ?", p.NewTitle, newPath, p.TrackID)
+				_, err = s.db.Exec("UPDATE tracks SET title = ?, path = ? WHERE id = ?", p.NewTitle, finalPath, p.TrackID)
 				if err != nil {
 					log.Printf("Metadata: Failed to update DB for track %s: %v", p.TrackID, err)
 				}
