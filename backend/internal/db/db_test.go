@@ -2,16 +2,13 @@
 package db
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
 )
 
-// TestMigrateAddsStatusColumnAndSettingsTable simulates a pre-T8 database
-// (users table without the status column, no settings table) and checks that
-// NewDB upgrades it in place: the column is added, existing rows default to
-// 'active', and a second open is a no-op.
 func TestMigrateAddsStatusColumnAndSettingsTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
 
@@ -81,4 +78,192 @@ func TestMigrateAddsStatusColumnAndSettingsTable(t *testing.T) {
 		t.Fatalf("second NewDB: %v", err)
 	}
 	defer func() { _ = again.Close() }()
+}
+
+func tableColumns(t *testing.T, file, table string) map[string]bool {
+	t.Helper()
+	raw, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	rows, err := raw.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		t.Fatalf("pragma table_info: %v", err)
+	}
+	defer rows.Close()
+
+	cols := map[string]bool{}
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, _type      string
+			dflt             any
+		)
+		if err := rows.Scan(&cid, &name, &_type, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return cols
+}
+
+// TestMigrateFreshDB verifies a brand-new database gets the full schema,
+// including the flexible metadata columns and the change-set index.
+func TestMigrateFreshDB(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "test.db")
+
+	database, err := NewDB(file)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer database.Close()
+
+	wantTrack := []string{
+		"id", "album_id", "title", "path", "duration", "bitrate",
+		"artist", "album_artist", "track_number", "disc_number",
+		"year", "genre", "composer", "comment",
+	}
+	cols := tableColumns(t, file, "tracks")
+	for _, c := range wantTrack {
+		if !cols[c] {
+			t.Fatalf("tracks table missing column %q (have %v)", c, cols)
+		}
+	}
+
+	changeCols := tableColumns(t, file, "metadata_changes")
+	if !changeCols["change_set_id"] {
+		t.Fatalf("metadata_changes missing change_set_id (have %v)", changeCols)
+	}
+
+	var indexCount int
+	if err := database.Get(&indexCount,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_metadata_changes_change_set'"); err != nil {
+		t.Fatalf("query index: %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("change-set index count = %d, want 1", indexCount)
+	}
+}
+
+// createOldSchema writes a database with the pre-T10 schema (tracks without
+// the tag columns, metadata_changes without change_set_id).
+func createOldSchema(t *testing.T, file string) {
+	t.Helper()
+	raw, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	old := []string{
+		`CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL)`,
+		`CREATE TABLE albums (
+			id TEXT PRIMARY KEY, artist_id TEXT NOT NULL, title TEXT NOT NULL,
+			cover_art TEXT, UNIQUE(artist_id, title),
+			FOREIGN KEY(artist_id) REFERENCES artists(id)
+		)`,
+		`CREATE TABLE tracks (
+			id TEXT PRIMARY KEY, album_id TEXT NOT NULL, title TEXT NOT NULL,
+			path TEXT UNIQUE NOT NULL, duration INTEGER DEFAULT 0, bitrate INTEGER DEFAULT 0,
+			FOREIGN KEY(album_id) REFERENCES albums(id)
+		)`,
+		`CREATE TABLE metadata_changes (
+			id TEXT PRIMARY KEY, track_id TEXT NOT NULL, field TEXT NOT NULL,
+			old_value TEXT, new_value TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(track_id) REFERENCES tracks(id)
+		)`,
+	}
+	for _, stmt := range old {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("exec %q: %v", stmt, err)
+		}
+	}
+}
+
+// TestMigrateUpgradesOldSchema verifies a pre-T10 database gains the new
+// columns without losing data or failing on the second run.
+func TestMigrateUpgradesOldSchema(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "test.db")
+	createOldSchema(t, file)
+
+	// Seed a row so the upgrade cannot silently rebuild the table.
+	raw, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO artists (id, name) VALUES ('a1', 'Artist')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO albums (id, artist_id, title) VALUES ('al1', 'a1', 'Album')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO tracks (id, album_id, title, path) VALUES ('t1', 'al1', 'Song', '/x/Song.flac')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	raw.Close()
+
+	database, err := NewDB(file)
+	if err != nil {
+		t.Fatalf("NewDB over old schema: %v", err)
+	}
+	defer database.Close()
+
+	cols := tableColumns(t, file, "tracks")
+	for _, c := range []string{"artist", "album_artist", "track_number", "disc_number", "year", "genre", "composer", "comment"} {
+		if !cols[c] {
+			t.Fatalf("tracks missing %q after migration (have %v)", c, cols)
+		}
+	}
+	if !tableColumns(t, file, "metadata_changes")["change_set_id"] {
+		t.Fatal("metadata_changes missing change_set_id after migration")
+	}
+
+	// Data survived.
+	var artistName string
+	if err := database.Get(&artistName, "SELECT name FROM artists WHERE id = ?", "a1"); err != nil || artistName != "Artist" {
+		t.Fatalf("seeded artist lost (name=%q err=%v)", artistName, err)
+	}
+
+	// Migration is idempotent: a second open must not fail.
+	database2, err := NewDB(file)
+	if err != nil {
+		t.Fatalf("second NewDB: %v", err)
+	}
+	_ = database2.Close()
+
+	// The old database file is still readable with the new columns NULL.
+	var artist sql.NullString
+	if err := database.Get(&artist, "SELECT artist FROM tracks WHERE id = ?", "t1"); err != nil {
+		t.Fatalf("read new column: %v", err)
+	}
+	if artist.Valid {
+		t.Fatalf("artist for old row = %q, want NULL", artist.String)
+	}
+}
+
+// TestAddColumnIfMissingDirect drives the helper on a throwaway table.
+func TestAddColumnIfMissingDirect(t *testing.T) {
+	dir := t.TempDir()
+	database, err := NewDB(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec("CREATE TABLE probe (id TEXT PRIMARY KEY)"); err != nil {
+		t.Fatalf("create probe: %v", err)
+	}
+	if err := addColumnIfMissing(database.DB, "probe", "extra", "INTEGER"); err != nil {
+		t.Fatalf("first add: %v", err)
+	}
+	if err := addColumnIfMissing(database.DB, "probe", "extra", "INTEGER"); err != nil {
+		t.Fatalf("second add (must be a no-op): %v", err)
+	}
 }

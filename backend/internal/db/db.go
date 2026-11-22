@@ -133,12 +133,20 @@ func migrate(db *sqlx.DB) error {
 			FOREIGN KEY(artist_id) REFERENCES artists(id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS tracks (
-			id       TEXT PRIMARY KEY,
-			album_id TEXT NOT NULL,
-			title    TEXT NOT NULL,
-			path     TEXT UNIQUE NOT NULL,
-			duration INTEGER DEFAULT 0,
-			bitrate  INTEGER DEFAULT 0,
+			id           TEXT PRIMARY KEY,
+			album_id     TEXT NOT NULL,
+			title        TEXT NOT NULL,
+			path         TEXT UNIQUE NOT NULL,
+			duration     INTEGER DEFAULT 0,
+			bitrate      INTEGER DEFAULT 0,
+			artist       TEXT,
+			album_artist TEXT,
+			track_number INTEGER,
+			disc_number  INTEGER,
+			year         INTEGER,
+			genre        TEXT,
+			composer     TEXT,
+			comment      TEXT,
 			FOREIGN KEY(album_id) REFERENCES albums(id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS jobs (
@@ -152,12 +160,13 @@ func migrate(db *sqlx.DB) error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS metadata_changes (
-			id        TEXT     PRIMARY KEY,
-			track_id  TEXT     NOT NULL,
-			field     TEXT     NOT NULL,
-			old_value TEXT,
-			new_value TEXT,
-			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			id            TEXT     PRIMARY KEY,
+			track_id      TEXT     NOT NULL,
+			field         TEXT     NOT NULL,
+			old_value     TEXT,
+			new_value     TEXT,
+			change_set_id TEXT,
+			timestamp     DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY(track_id) REFERENCES tracks(id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS users (
@@ -209,5 +218,56 @@ func migrate(db *sqlx.DB) error {
 		}
 	}
 
+	// The CREATE TABLE IF NOT EXISTS statements above do not add columns to a
+	// table that already exists, so pre-existing databases get the flexible
+	// metadata columns via guarded ALTER TABLE calls.
+	trackColumns := []struct {
+		name string
+		def  string
+	}{
+		{"artist", "TEXT"},
+		{"album_artist", "TEXT"},
+		{"track_number", "INTEGER"},
+		{"disc_number", "INTEGER"},
+		{"year", "INTEGER"},
+		{"genre", "TEXT"},
+		{"composer", "TEXT"},
+		{"comment", "TEXT"},
+	}
+	for _, col := range trackColumns {
+		if err := addColumnIfMissing(db, "tracks", col.name, col.def); err != nil {
+			log.Printf("Migration error: %v", err)
+			return err
+		}
+	}
+	if err := addColumnIfMissing(db, "metadata_changes", "change_set_id", "TEXT"); err != nil {
+		log.Printf("Migration error: %v", err)
+		return err
+	}
+	// The index needs the column to exist first, so it is created after the
+	// guarded ALTER above (a fresh database already has both).
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_changes_change_set ON metadata_changes(change_set_id)"); err != nil {
+		log.Printf("Migration error: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// addColumnIfMissing runs ALTER TABLE table ADD COLUMN column def only when
+// the column is not already present (the table names are internal constants,
+// never user input).
+func addColumnIfMissing(db *sqlx.DB, table, column, def string) error {
+	var count int
+	if err := db.Get(&count, "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column); err != nil {
+		return fmt.Errorf("check column %s.%s: %w", table, column, err)
+	}
+	if count > 0 {
+		return nil
+	}
+	stmt := "ALTER TABLE " + table + " ADD COLUMN " + column + " " + def
+	if _, err := db.Exec(stmt); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
 	return nil
 }
