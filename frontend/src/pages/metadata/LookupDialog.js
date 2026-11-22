@@ -49,7 +49,6 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
 
   const openRelease = async (mbid) => {
     setLoadingRelease(true);
-    setResults(null);
     try {
       const res = await apiFetch(
         `/metadata/lookup/release/${mbid}?album_id=${encodeURIComponent(albumId)}`
@@ -143,6 +142,7 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
             </div>
             {results && results.error && <p className="lookup-error">{results.error}</p>}
             {searching && <p className="lookup-status">Searching MusicBrainz…</p>}
+            {loadingRelease && <p className="lookup-status">Loading release…</p>}
             {Array.isArray(results) && (
               <div className="lookup-results">
                 {results.map((c) => (
@@ -150,6 +150,7 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
                     type="button"
                     className="lookup-result"
                     key={c.mbid}
+                    disabled={loadingRelease}
                     onClick={() => openRelease(c.mbid)}
                   >
                     <span className="lookup-result-title">{c.title}</span>
