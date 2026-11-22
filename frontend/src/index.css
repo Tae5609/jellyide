@@ -386,6 +386,71 @@ input:focus, select:focus, textarea:focus {
   font-size: 13px;
 }
 
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.job-status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.job-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge.retry-scheduled {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.job-attempts {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.job-error-toggle {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.job-error-toggle:hover {
+  color: var(--accent-hover);
+}
+
+.job-error-full {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.job-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.job-card-actions {
+  display: flex;
+  margin-top: 8px;
+}
+
 .job-cards {
   display: none;
 }
