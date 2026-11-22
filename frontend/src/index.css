@@ -927,6 +927,27 @@ input:focus, select:focus, textarea:focus {
   margin: 8px 0 0 0;
 }
 
+.login-register {
+  margin-top: 20px;
+  text-align: center;
+}
+
+.login-register-link {
+  font-size: 14px;
+}
+
+.register-awaiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.register-awaiting .login-hint {
+  font-size: 15px;
+}
+
 .auth-loader {
   min-height: 100vh;
   min-height: 100dvh;

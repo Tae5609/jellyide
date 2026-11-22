@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { safeRedirectFrom } from '../auth/redirect';
 
@@ -141,6 +141,14 @@ export default function Login() {
 
         {!localEnabled && ssoButtons.length === 0 && (
           <p className="login-hint">No sign-in methods are enabled.</p>
+        )}
+
+        {providers.registration !== 'admin_only' && (
+          <div className="login-register">
+            <Link to="/register" className="login-register-link">
+              Create account
+            </Link>
+          </div>
         )}
       </div>
     </div>
