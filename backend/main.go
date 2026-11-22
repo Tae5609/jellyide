@@ -140,7 +140,6 @@ func main() {
 	// checks for new releases on the configured interval. A failure never
 	// breaks downloads (the previous binary stays in place).
 	updaterCtx, stopUpdater := context.WithCancel(context.Background())
-	defer stopUpdater()
 	go ytdlpMgr.Loop(updaterCtx)
 
 	// Wrap the whole router with the auth middleware. The SPA is
@@ -186,6 +185,7 @@ func main() {
 		log.Printf("Failed to close database: %v", cerr)
 	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		stopUpdater()
 		log.Fatal("Failed to start server: ", err)
 	}
 }

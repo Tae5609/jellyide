@@ -376,7 +376,7 @@ func TestScanSkipsJellyideDir(t *testing.T) {
 	if err := os.MkdirAll(jellyDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(jellyDir, "yt-dlp"), []byte("bin"), 0o700); err != nil {
+	if err := os.WriteFile(filepath.Join(jellyDir, "yt-dlp"), []byte("bin"), 0o600); err != nil {
 		t.Fatalf("write yt-dlp: %v", err)
 	}
 

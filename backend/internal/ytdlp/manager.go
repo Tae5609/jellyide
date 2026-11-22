@@ -95,9 +95,8 @@ type Ticker interface {
 
 type realTicker struct{ *time.Ticker }
 
-func (t *realTicker) Chan() <-chan time.Time { return t.Ticker.C }
+func (t *realTicker) Chan() <-chan time.Time { return t.C }
 
-// ChannelURLs are the fixed, https-only sources for one channel.
 // ChannelURLs are the fixed, https-only sources for one channel. The type
 // is exported so tests can point a manager at a fake release server.
 type ChannelURLs struct {

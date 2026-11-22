@@ -154,7 +154,7 @@ func (m *Manager) install(ctx context.Context, channel string) error {
 	if err := verifySHA256(tmpName, want); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o755); err != nil {
+	if err := os.Chmod(tmpName, 0o755); err != nil { //nolint:gosec // G302 - the yt-dlp binary must be executable
 		return fmt.Errorf("chmod new %w", err)
 	}
 	version, err := m.smokeTest(tmpName)

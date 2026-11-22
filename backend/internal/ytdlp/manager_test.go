@@ -100,7 +100,7 @@ func seedBinary(t *testing.T, m *Manager, version string) {
 	if err := os.MkdirAll(m.binDir, 0o700); err != nil {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
-	if err := os.WriteFile(m.BinPath(), []byte(fakeBinary(version)), 0o755); err != nil {
+	if err := os.WriteFile(m.BinPath(), []byte(fakeBinary(version)), 0o755); err != nil { //nolint:gosec // G306 - test fixture: the fake binary is executed by the tests, so it must be executable
 		t.Fatalf("write seed %v", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestStatusShape(t *testing.T) {
 	}
 
 	// A rollback candidate flips has_rollback.
-	if err := os.WriteFile(m.prevPath(), []byte(fakeBinary("2025.1.1")), 0o755); err != nil {
+	if err := os.WriteFile(m.prevPath(), []byte(fakeBinary("2025.1.1")), 0o600); err != nil {
 		t.Fatalf("write prev: %v", err)
 	}
 	s, _ = m.Status()
