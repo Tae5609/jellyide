@@ -1,6 +1,7 @@
 package library
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -334,6 +335,77 @@ func TestRenameAlbumSanitizesTitle(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "Artist One", "A-B- C")); err != nil {
 		t.Fatalf("sanitized dir missing: %v", err)
+	}
+}
+
+// TestRenameAlbumTargetExists covers both collision shapes (existing empty
+// and non-empty directory): the rename must fail with ErrAlbumExists and
+// leave everything exactly where it was.
+func TestRenameAlbumTargetExists(t *testing.T) {
+	s, dir := newTestService(t)
+
+	artistID, err := s.EnsureArtist("Artist One")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "Old Name")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	oldDir := filepath.Join(dir, "Artist One", "Old Name")
+	path := filepath.Join(oldDir, "Song One.flac")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {
+		t.Fatalf("write track file: %v", err)
+	}
+	if err := s.UpsertTrack(albumID, "Song One", path, 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+
+	// Existing empty directory.
+	emptyTarget := filepath.Join(dir, "Artist One", "Taken Empty")
+	if err := os.Mkdir(emptyTarget, 0o700); err != nil {
+		t.Fatalf("mkdir empty target: %v", err)
+	}
+	if err := s.RenameAlbum(albumID, "Taken Empty"); !errors.Is(err, ErrAlbumExists) {
+		t.Fatalf("empty target: error = %v, want ErrAlbumExists", err)
+	}
+
+	// Existing non-empty directory.
+	fullTarget := filepath.Join(dir, "Artist One", "Taken Full")
+	if err := os.Mkdir(fullTarget, 0o700); err != nil {
+		t.Fatalf("mkdir full target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fullTarget, "Other.flac"), []byte("other"), 0o600); err != nil {
+		t.Fatalf("write occupant: %v", err)
+	}
+	if err := s.RenameAlbum(albumID, "Taken Full"); !errors.Is(err, ErrAlbumExists) {
+		t.Fatalf("non-empty target: error = %v, want ErrAlbumExists", err)
+	}
+
+	// Nothing moved: the directory, its file and the database row are all
+	// unchanged.
+	if got, err := os.ReadFile(path); err != nil || string(got) != "audio" { //nolint:gosec // G304 - path is built from t.TempDir()
+		t.Fatalf("track file = %q, err = %v, want unchanged", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(fullTarget, "Other.flac")); err != nil {
+		t.Fatalf("occupant file gone: %v", err)
+	}
+	album, err := s.GetAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if album.Title != "Old Name" {
+		t.Fatalf("album title = %q, want Old Name (unchanged)", album.Title)
+	}
+	tracks, err := s.GetTracksByAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetTracksByAlbum: %v", err)
+	}
+	if tracks[0].Path != path {
+		t.Fatalf("track path = %q, want %q (unchanged)", tracks[0].Path, path)
 	}
 }
 
