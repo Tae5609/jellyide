@@ -3,6 +3,7 @@
 package library
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,12 @@ import (
 	"github.com/google/uuid"
 
 	"yt-scraper/internal/db"
+	"yt-scraper/internal/fsutil"
 )
+
+// ErrAlbumExists is returned by RenameAlbum when the target folder
+// already exists. Nothing is moved or updated; the API maps it to a 409.
+var ErrAlbumExists = errors.New("an album folder with that name already exists")
 
 // Artist is one row in the artists table.
 type Artist struct {
@@ -164,7 +170,9 @@ func (s *Service) EnsureAlbum(artistID string, title string) (string, error) {
 
 // RenameAlbum renames the album in the database, renames the on-disk
 // directory (updating the stored track paths and cover URL) and rewrites
-// the album tag on every track file with the Python helper.
+// the album tag on every track file with the Python helper. It returns
+// ErrAlbumExists when the target folder already exists; then nothing is
+// moved and no database row changes.
 func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 	album, err := s.GetAlbum(albumID)
 	if err != nil {
@@ -181,7 +189,11 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 		newPath := filepath.Join(filepath.Dir(oldPath), sanitizeFilename(newTitle))
 
 		if oldPath != newPath {
-			if err := os.Rename(oldPath, newPath); err != nil {
+			if err := fsutil.SafeRename(oldPath, newPath); err != nil {
+				var exists *fsutil.ExistsError
+				if errors.As(err, &exists) {
+					return ErrAlbumExists
+				}
 				log.Printf("Library: Failed to rename directory from %s to %s: %v", oldPath, newPath, err)
 				return err
 			}

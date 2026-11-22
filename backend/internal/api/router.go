@@ -288,6 +288,10 @@ func renameAlbum(lib *library.Service) http.HandlerFunc {
 		}
 		err := lib.RenameAlbum(id, req.Title)
 		if err != nil {
+			if errors.Is(err, library.ErrAlbumExists) {
+				sendJSONError(w, err.Error(), http.StatusConflict)
+				return
+			}
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

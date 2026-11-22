@@ -3,7 +3,6 @@ package metadata
 import (
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -153,33 +152,56 @@ func (s *Service) ApplyTrackEdits(edits []TrackEdit) (string, string, error) {
 // runApplyJob is the metadata_apply job body: for every edit it writes the
 // tags, renames the file when the title changed, updates the database and
 // records one metadata_changes row per field, all under the change-set id.
+// Renames that had to be auto-numbered leave a note in the job's progress
+// text and a per-track result (rename_collision/final_filename) in its
+// details, for the UI to display.
 func (s *Service) runApplyJob(jobID, changeSetID string, edits []NormalizedEdit) {
 	total := strconv.Itoa(len(edits))
 	if err := s.jm.UpdateJobStatus(jobID, jobs.StatusRunning, "0/"+total, ""); err != nil {
 		log.Printf("metadata: update job %s: %v", jobID, err)
 	}
 
+	notes := []string{}
+	results := []renameResult{}
 	for i, e := range edits {
 		track, err := s.lib.GetTrack(e.TrackID)
 		if err != nil {
 			log.Printf("metadata: track %s no longer exists, skipping its edits", e.TrackID)
 			continue
 		}
-		s.applyEditsToTrack(track, e, changeSetID)
+		outcome := s.applyEditsToTrack(track, e, changeSetID)
+		if outcome.note != "" {
+			notes = append(notes, outcome.note)
+		}
+		if outcome.rename != nil {
+			results = append(results, *outcome.rename)
+		}
 		if err := s.jm.UpdateJobStatus(jobID, jobs.StatusRunning, strconv.Itoa(i+1)+"/"+total, ""); err != nil {
 			log.Printf("metadata: update job %s: %v", jobID, err)
 		}
 	}
 
-	if err := s.jm.UpdateJobStatus(jobID, jobs.StatusCompleted, "100%", ""); err != nil {
+	// Merge the results before flipping the status, so a job that reads
+	// "completed" already carries them.
+	if len(results) > 0 {
+		s.appendJobResults(jobID, results)
+	}
+	progress := "100%"
+	if len(notes) > 0 {
+		progress += ": " + strings.Join(notes, "; ")
+	}
+	if err := s.jm.UpdateJobStatus(jobID, jobs.StatusCompleted, progress, ""); err != nil {
 		log.Printf("metadata: update job %s: %v", jobID, err)
 	}
 }
 
 // applyEditsToTrack applies one track's edits. If the tag write or the
 // file rename fails, the track is left completely untouched (no DB update,
-// no change records) so the database never diverges from the file.
-func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, changeSetID string) {
+// no change records) so the database never diverges from the file. The
+// returned outcome carries the rename note and per-track result when the
+// new name was already taken and had to be auto-numbered.
+func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, changeSetID string) applyOutcome {
+	var outcome applyOutcome
 	// 1. Write the tags on disk.
 	fields := make(map[string]interface{}, len(edit.Set)+len(edit.Cleared))
 	for name, value := range edit.Set {
@@ -191,23 +213,34 @@ func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, c
 	if len(fields) > 0 {
 		if err := s.tags.WriteFields(track.Path, fields); err != nil {
 			log.Printf("metadata: write tags for %s: %v", track.Path, err)
-			return
+			return outcome
 		}
 	}
 
 	// 2. Rename on disk when the title changed (existing naming scheme:
-	// sanitized title plus the original extension).
+	// sanitized title plus the original extension). A taken target is
+	// auto-numbered " (2)", " (3)", ... instead of being overwritten.
 	newTitle := track.Title
 	if value, ok := edit.Set["title"]; ok {
 		newTitle = value.(string)
 	}
 	newPath := track.Path
 	if newTitle != track.Title {
-		newPath = filepath.Join(filepath.Dir(track.Path), sanitizeFilename(newTitle)+filepath.Ext(track.Path))
-		if newPath != track.Path {
-			if err := os.Rename(track.Path, newPath); err != nil {
-				log.Printf("metadata: rename %s to %s: %v", track.Path, newPath, err)
-				return
+		candidate := filepath.Join(filepath.Dir(track.Path), sanitizeFilename(newTitle)+filepath.Ext(track.Path))
+		if candidate != track.Path {
+			finalPath, suffixed, err := renameFileNoOverwrite(track.Path, filepath.Dir(track.Path), sanitizeFilename(newTitle), filepath.Ext(track.Path))
+			if err != nil {
+				log.Printf("metadata: rename %s to %s: %v", track.Path, candidate, err)
+				return outcome
+			}
+			newPath = finalPath
+			if suffixed {
+				outcome.note = renameNote(filepath.Base(finalPath))
+				outcome.rename = &renameResult{
+					TrackID:         track.ID,
+					RenameCollision: true,
+					FinalFilename:   filepath.Base(finalPath),
+				}
 			}
 		}
 	}
@@ -220,11 +253,11 @@ func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, c
 		albumID, err := s.ensureTargetAlbum(track, name.(string))
 		if err != nil {
 			log.Printf("metadata: resolve album %q for track %s: %v", name, track.ID, err)
-			return
+			return outcome
 		}
 		if _, err := s.db.Exec("UPDATE tracks SET album_id = ? WHERE id = ?", albumID, track.ID); err != nil {
 			log.Printf("metadata: repoint track %s: %v", track.ID, err)
-			return
+			return outcome
 		}
 	}
 
@@ -263,7 +296,7 @@ func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, c
 		args = append(args, track.ID)
 		if _, err := s.db.Exec("UPDATE tracks SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
 			log.Printf("metadata: update track %s: %v", track.ID, err)
-			return
+			return outcome
 		}
 	}
 
@@ -274,6 +307,7 @@ func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, c
 	for _, name := range edit.Cleared {
 		s.recordChange(track, name, nil, changeSetID)
 	}
+	return outcome
 }
 
 // ensureTargetAlbum finds the album with the given title under the

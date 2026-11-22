@@ -366,6 +366,57 @@ func TestRenameAndDeleteAlbum(t *testing.T) {
 	}
 }
 
+// TestRenameAlbumCollision409 checks the collision contract: renaming
+// onto an existing folder (empty or not) returns 409 with the exact
+// error body and leaves the library untouched.
+func TestRenameAlbumCollision409(t *testing.T) {
+	h, _, lib, _, dir := newTestRouter(t)
+	albumID, _ := seedTrack(t, lib, dir, "Artist One", "Old Name", "Track 1")
+
+	for name, makeTarget := range map[string]func(string){
+		"Taken Empty": func(path string) {
+			if err := os.Mkdir(path, 0o750); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+		},
+		"Taken Full": func(path string) {
+			if err := os.MkdirAll(path, 0o750); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(path, "Other.flac"), []byte("x"), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		},
+	} {
+		target := filepath.Join(dir, "Artist One", name)
+		makeTarget(target)
+
+		rec := postRaw(t, h, "/api/library/albums/"+albumID+"/rename", fmt.Sprintf(`{"title": %q}`, name))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("rename onto existing %q dir: got %d, want 409: %s", name, rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["error"] != "an album folder with that name already exists" {
+			t.Fatalf("error = %q, want the collision message", body["error"])
+		}
+	}
+
+	// The album and its directory are unchanged.
+	album, err := lib.GetAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if album.Title != "Old Name" {
+		t.Fatalf("album title = %q, want Old Name (unchanged)", album.Title)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Artist One", "Old Name")); err != nil {
+		t.Fatalf("album dir missing: %v", err)
+	}
+}
+
 func TestTriggerScanEmptyDir(t *testing.T) {
 	h, _, _, jm, _ := newTestRouter(t)
 
