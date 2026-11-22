@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start an opencode worker in the background (non-blocking).
 # Usage: dispatch.sh <job-name> <agent> <worktree> <prompt-file>
-#   agent ending in "-b" runs on Orion key B (max 3 parallel);
+#   agent ending in "-b" runs on Orion key B (max 2 parallel; 1 slot kept for opencode small_model calls);
 #   other agents run on key A (max 2 parallel; the orchestrator needs the 3rd slot —
 #   a 4th request on a key is rejected with a 429 and kills the run).
 set -euo pipefail
@@ -12,7 +12,7 @@ mkdir -p "$RUN"
 name=$1 agent=$2 wt=$3 prompt=$4
 [ -d "$wt" ] || { echo "NO_WORKTREE $wt"; exit 2; }
 [ -f "$prompt" ] || { echo "NO_PROMPT_FILE $prompt"; exit 2; }
-case "$agent" in *-b) lane=B; max=3 ;; *) lane=A; max=2 ;; esac
+case "$agent" in *-b) lane=B; max=2 ;; *) lane=A; max=2 ;; esac
 
 running=0
 for f in "$RUN"/*.pid; do
@@ -50,10 +50,21 @@ cp "$prompt" "$RUN/$name.prompt.md"
 echo "$lane" > "$RUN/$name.lane"
 rm -f "$RUN/$name.done" "$RUN/$name.reported"
 setsid nohup bash -c '
-  opencode run --pure --agent "$1" --auto --dir "$2" --title "$3" \
-    "Follow the attached job instructions exactly. Your final message is your report." \
-    -f "$4" > "$5" 2>&1
-  echo $? > "$6"
+  # Auto-resume on Orion rate limits (max 3 parallel requests per key):
+  # a 429 kills opencode run, so relaunch with a continuation note (max 6 tries).
+  : > "$5"
+  for try in 1 2 3 4 5 6; do
+    start=$(stat -c %s "$5")
+    if [ "$try" -eq 1 ]; then msg="Follow the attached job instructions exactly. Your final message is your report."
+    else msg="Follow the attached job instructions exactly. NOTE: your previous attempt (try $((try-1))) was killed by an API rate limit mid-work. Inspect git status/log in the worktree and continue from the existing work; do not restart from scratch. Your final message is your report."; fi
+    opencode run --pure --agent "$1" --auto --dir "$2" --title "$3" "$msg" -f "$4" >> "$5" 2>&1
+    code=$?
+    if tail -c +"$((start + 1))" "$5" | grep -q "Rate limit exceeded"; then
+      echo "[dispatch] rate-limited on try $try; resuming in 90s" >> "$5"; sleep 90; continue
+    fi
+    break
+  done
+  echo $code > "$6"
 ' _ "$agent" "$wt" "$name" "$RUN/$name.prompt.md" "$RUN/$name.log" "$RUN/$name.done" \
   >/dev/null 2>&1 < /dev/null &
 echo $! > "$RUN/$name.pid"

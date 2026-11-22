@@ -23,7 +23,7 @@ Do **not** use the `task` tool, because it blocks you until every task in the ba
 | Lane | API key | Agents | Max parallel |
 |---|---|---|---|
 | A | Orion key A | `jelly-dev`, `jelly-reviewer` | 2 (you need the 3rd slot; a 4th request is rejected and kills your run) |
-| B | Orion key B | `jelly-dev-b`, `jelly-reviewer-b` (27B), `jelly-fast-b` (Flash) | 3 |
+| B | Orion key B | `jelly-dev-b`, `jelly-reviewer-b` (27B), `jelly-fast-b` (Flash) | 2 (1 slot kept for opencode background calls) |
 
 - Start a job: write a prompt file to `docs/plan/logs/prompts/<job>.md`, then run `scripts/agents/dispatch.sh <job> <agent> <worktree> <prompt-file>`.
   - Name jobs `<T#>-dev-r<round>` or `<T#>-review-r<round>`.
@@ -31,7 +31,7 @@ Do **not** use the `task` tool, because it blocks you until every task in the ba
   - `LANE_FULL` means try the other lane's equivalent agent, or wait.
 - Wait for results: `scripts/agents/wait.sh 480`, called with a bash timeout of at least 600000 ms. It returns as soon as **any** job finishes, prints that job's final report, and shows the lane usage. `NONE_FINISHED` means call it again.
 - Check state any time: `scripts/agents/status.sh`. A job marked `dead` must be redispatched.
-- **Keep all 5 worker slots busy at all times (2 on lane A, 3 on lane B) (owner's explicit request).** An idle slot is a failure. If no queued task is ready, use the slot for a second reviewer pass on a big open PR, a BUGS.md follow-up brief, or pre-rebasing in-flight branches onto main. After every `wait.sh` return, immediately: (1) act on the finished job (review it, ship it, or send it back), then (2) fill every free slot with the next ready job from the queue below.
+- **Keep all 4 worker slots busy at all times (2 on lane A, 2 on lane B) (owner's explicit request).** An idle slot is a failure. If no queued task is ready, use the slot for a second reviewer pass on a big open PR, a BUGS.md follow-up brief, or pre-rebasing in-flight branches onto main. After every `wait.sh` return, immediately: (1) act on the finished job (review it, ship it, or send it back), then (2) fill every free slot with the next ready job from the queue below.
 - **Model guard:** workers MUST run on their Orion agent. `dispatch.sh` refuses with `STALE_AGENTS` (the worktree's old branch carries an outdated `.opencode/agents/<agent>.md`; fix it by committing WIP in the worktree, then `git rebase origin/main`, which deletes that dir) or `AGENT_NOT_RUNNABLE` (run `scripts/agents/install.sh`). If `wait.sh` prints `AGENT_FALLBACK`, the job ran on a non-Orion default model: treat its report as untrusted, and have an Orion dev re-verify its commits before review. Never edit opencode config or agent files yourself. Agent sources live in `scripts/agents/opencode-agents/` and are installed globally.
 - Use `jelly-fast-b` (fast but weaker) only for docs writing, formatting/lint/CI-log fixes, and trivial rebases. Use the 27B agents for features, reviews and security work.
 - Spread work across lanes: a review may run on either lane, regardless of which lane the dev used.
