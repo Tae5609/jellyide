@@ -2,7 +2,6 @@
 package auth
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -64,8 +63,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		IsAdmin  bool   `json:"is_admin"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !usernameRegexp.MatchString(req.Username) {
@@ -113,8 +111,7 @@ func (s *Service) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		Email       *string `json:"email"`
 		DisplayName *string `json:"display_name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &patch) != nil {
 		return
 	}
 	if patch.Status != nil && !validUserStatus(*patch.Status) {
@@ -188,8 +185,7 @@ func (s *Service) handleResetUserPassword(w http.ResponseWriter, r *http.Request
 	var req struct {
 		NewPassword string `json:"new_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if len(req.NewPassword) < MinPasswordLength {
@@ -268,8 +264,7 @@ func (s *Service) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RegistrationMode string `json:"registration_mode"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !isValidRegistrationMode(req.RegistrationMode) {

@@ -1075,3 +1075,19 @@ func TestInfoArgsProtectsURL(t *testing.T) {
 		}
 	}
 }
+
+// Regression: oversized JSON bodies are rejected with 413 and the
+// previous settings are kept.
+func TestSetConfigOversizedBody(t *testing.T) {
+	h, d, _, _, _ := newTestRouter(t)
+
+	limit, proxy := d.GetLimit(), d.GetProxy()
+	body := `{"concurrent_limit":7,"proxy":"` + strings.Repeat("a", maxJSONBody+1024) + `"}`
+	rec := postRaw(t, h, "/api/config", body)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: got %d, want 413", rec.Code)
+	}
+	if d.GetLimit() != limit || d.GetProxy() != proxy {
+		t.Fatalf("settings changed: limit %d->%d, proxy length %d->%d", limit, d.GetLimit(), len(proxy), len(d.GetProxy()))
+	}
+}

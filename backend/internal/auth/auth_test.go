@@ -733,3 +733,16 @@ func TestLoginRateLimitTrustProxy(t *testing.T) {
 		}
 	})
 }
+
+// Regression: oversized JSON bodies are rejected with 413 before any of
+// the body is processed.
+func TestLoginOversizedBody(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+
+	body := `{"username":"` + testAdmin + `","password":"` + strings.Repeat("a", maxAuthBody+1024) + `"}`
+	rec := doReq(t, h, http.MethodPost, "/api/auth/login", body, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: got %d, want 413", rec.Code)
+	}
+}

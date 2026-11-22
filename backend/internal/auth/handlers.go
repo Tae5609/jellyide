@@ -206,8 +206,7 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Email    string `json:"email"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !s.cfg.LocalEnabled {
@@ -294,8 +293,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !s.cfg.LocalEnabled {
@@ -388,8 +386,7 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	u := UserFromContext(r.Context())
@@ -419,6 +416,27 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// maxAuthBody caps the JSON request bodies of the auth endpoints
+// (1 MiB). Cover uploads carry their own larger cap in the metadata
+// package.
+const maxAuthBody = 1 << 20
+
+// decodeJSONBody caps r.Body at maxAuthBody and decodes it into v.
+// Oversized bodies get 413, malformed JSON 400.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxAuthBody)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		} else {
+			writeJSONError(w, http.StatusBadRequest, "invalid json")
+		}
+		return err
+	}
+	return nil
 }
 
 // clientIP returns the address used for rate limiting. Behind a trusted
