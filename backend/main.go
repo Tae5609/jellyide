@@ -128,6 +128,11 @@ func main() {
 	// same-origin, so no CORS handling is needed.
 	handler := authSvc.Middleware(r)
 
+	// In first-run setup mode (no users, no ADMIN_PASSWORD) the gate
+	// 503s the API and media except /api/setup/* and /api/auth/providers.
+	// It opens without a restart once the first user exists.
+	handler = authSvc.SetupGate(handler)
+
 	port := getEnv("PORT", "8080")
 	log.Printf("JellyIDE Server starting on :%s", port)
 	log.Printf("DB Path: %s", dbPath)

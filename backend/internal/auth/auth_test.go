@@ -428,13 +428,18 @@ func TestLogout(t *testing.T) {
 	}
 }
 
-func TestBootstrapRequiresAdminPassword(t *testing.T) {
-	_, err := newTestServiceErr(t, Config{Enabled: true, AdminUsername: testAdmin, AdminPassword: ""})
-	if err == nil {
-		t.Fatal("expected error when ADMIN_PASSWORD is empty and no users exist")
+// With no users and no ADMIN_PASSWORD the service no longer refuses to
+// start: it enters setup mode instead (no admin row is created).
+func TestSetupModeWhenNoUsersAndNoPassword(t *testing.T) {
+	svc, err := newTestServiceErr(t, Config{Enabled: true, AdminUsername: testAdmin, AdminPassword: ""})
+	if err != nil {
+		t.Fatalf("NewService in setup mode: %v", err)
 	}
-	if err.Error() != "no users exist: set ADMIN_PASSWORD to bootstrap the admin account" {
-		t.Fatalf("unexpected bootstrap error: %v", err)
+	if !svc.SetupRequired() {
+		t.Fatal("SetupRequired should be true with no users and no ADMIN_PASSWORD")
+	}
+	if n, err := svc.CountUsers(); err != nil || n != 0 {
+		t.Fatalf("users in setup mode = %d (err %v), want 0", n, err)
 	}
 }
 

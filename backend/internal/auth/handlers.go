@@ -32,6 +32,9 @@ type Providers struct {
 	// approval); the login page uses it to decide whether to offer a
 	// "Create account" link.
 	Registration string `json:"registration"`
+	// SetupRequired is true while the first-run setup wizard is pending
+	// (no users exist yet); the frontend sends every route to /setup.
+	SetupRequired bool `json:"setup_required"`
 }
 
 // providerState holds the mutable provider registrations.
@@ -70,27 +73,30 @@ func (s *Service) SetSAMLProvider(name string) {
 	s.providers.saml = ProviderInfo{Enabled: true, Name: name}
 }
 
-// Login rate limiting: max loginFailureLimit failures per IP per
-// loginFailureWindow, then requests get 429.
+// Login rate limiting: max failures per IP per window, then requests get
+// 429. The login and register endpoints share loginFailureLimit; the
+// first-run setup endpoint gets the stricter setupFailureLimit.
 const (
 	loginFailureLimit  = 10
 	loginFailureWindow = 15 * time.Minute
+	setupFailureLimit  = 5
 )
 
 type loginLimiter struct {
+	limit int
 	mu    sync.Mutex
 	fails map[string][]time.Time
 }
 
-func newLoginLimiter() *loginLimiter {
-	return &loginLimiter{fails: make(map[string][]time.Time)}
+func newLoginLimiter(limit int) *loginLimiter {
+	return &loginLimiter{limit: limit, fails: make(map[string][]time.Time)}
 }
 
 // blocked reports whether ip has reached the failure limit inside the window.
 func (l *loginLimiter) blocked(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.pruneLocked(ip, time.Now())) >= loginFailureLimit
+	return len(l.pruneLocked(ip, time.Now())) >= l.limit
 }
 
 // record adds a failed attempt for ip.
@@ -106,6 +112,21 @@ func (l *loginLimiter) reset(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.fails, ip)
+}
+
+// clearAll drops the failure history for every IP.
+func (l *loginLimiter) clearAll() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.fails = make(map[string][]time.Time)
+}
+
+// ClearLoginRateLimit clears the login rate limiter. The limiter is in
+// memory per process: this call affects only this process, and restarting
+// the server clears it as well. The admin CLI exposes it as
+// `server admin unlock`.
+func (s *Service) ClearLoginRateLimit() {
+	s.limiter.clearAll()
 }
 
 // pruneLocked drops failures older than the window. Caller holds l.mu.
@@ -143,6 +164,7 @@ func (s *Service) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/auth/me", s.handleMe).Methods(http.MethodGet)
 	r.HandleFunc("/auth/password", s.handleChangePassword).Methods(http.MethodPost)
 	r.HandleFunc("/auth/register", s.handleRegister).Methods(http.MethodPost)
+	s.registerSetupRoutes(r)
 	s.registerAdminRoutes(r)
 	if s.oidc != nil {
 		s.registerOIDCRoutes(r)
@@ -158,6 +180,7 @@ func (s *Service) handleProviders(w http.ResponseWriter, _ *http.Request) {
 		mode = RegistrationModeAdminOnly
 	}
 	p.Registration = mode
+	p.SetupRequired = s.SetupRequired()
 	writeJSON(w, http.StatusOK, p)
 }
 

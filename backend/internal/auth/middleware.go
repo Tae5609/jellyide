@@ -12,8 +12,9 @@ type userContextKey struct{}
 
 // isPublicPath reports whether the path needs no session at all.
 //
-// Public: anything outside /api/ and /media/, plus /api/auth/* except
-// /api/auth/me, /api/auth/logout and /api/auth/password.
+// Public: anything outside /api/ and /media/, /api/auth/* except
+// /api/auth/me, /api/auth/logout and /api/auth/password, and /api/setup/*
+// (the first-run wizard; the setup gate decides when it is reachable).
 func isPublicPath(path string) bool {
 	if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/media/") {
 		return true
@@ -23,6 +24,9 @@ func isPublicPath(path string) bool {
 		case "/api/auth/me", "/api/auth/logout", "/api/auth/password":
 			return false
 		}
+		return true
+	}
+	if strings.HasPrefix(path, "/api/setup/") {
 		return true
 	}
 	return false
