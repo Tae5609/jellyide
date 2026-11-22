@@ -45,19 +45,23 @@ Do **not** use the `task` tool, because it blocks you until every task in the ba
 | T6b ops docs + smoke test | T6-project-docs.md (part B) | docs/ops-docs | – (start now) | jelly-dev-b |
 | **T17 URGENT no-overwrite rename (data loss)** | T17-no-overwrite-rename.md | fix/no-overwrite-rename | T12 (shares rename code). Dispatch the moment T12 merges, ahead of everything else | jelly-dev |
 | T16 sync conflict detection + resolution UI | T16-sync-conflicts.md | feat/sync-conflicts | T11, T17 | jelly-dev-b |
+| T19 first-run setup wizard + admin recovery CLI | T19-admin-setup-recovery.md | feat/admin-setup-recovery | T12, and T6b (it edits the auth docs and compose files T6b owns) | jelly-dev-b |
 | T14 download retry (manual + auto) | T14-download-retry.md | feat/download-retry | T12 | jelly-dev |
 | T15 yt-dlp updater (admin UI + auto-update) | T15-ytdlp-updater.md | feat/ytdlp-updater | T12, T13 (both touch shared files) | jelly-dev-b |
-| T9 frontend quality | T9-frontend-quality.md | test/frontend-quality | T11, T13, T14, T15, T16 (Prettier reformat must run last) | jelly-dev-b |
+| T9 frontend quality | T9-frontend-quality.md | test/frontend-quality | T11, T13, T14, T15, T16, T19 (Prettier reformat must run last) | jelly-dev-b |
 | Follow-ups T13+ | you write them from BUGS.md | fix/... | file-disjoint from in-flight work | any |
-| Docs refresh | – | docs/refresh | T6a, T6b, T9, T11, T12, T14, T15, T16, T17 all merged | jelly-fast-b: re-check that docs match the final code (shortcuts, env vars incl. DOWNLOAD_MAX_RETRIES and YTDLP_MANAGED, endpoints incl. retry, /api/admin/ytdlp and /api/sync/*; document the sync conflict model in docs/METADATA.md) and fix drift |
+| Docs refresh | – | docs/refresh | T6a, T6b, T9, T11, T12, T14, T15, T16, T17, T19 all merged | jelly-fast-b: re-check that docs match the final code (shortcuts, env vars incl. DOWNLOAD_MAX_RETRIES and YTDLP_MANAGED, endpoints incl. retry, /api/admin/ytdlp and /api/sync/*; document the sync conflict model in docs/METADATA.md) and fix drift |
 
 Already MERGED: T1, T2, T3, T4, T5, T7, T8, T10 (see STATUS.md).
 Worktrees: `/home/tae5609/jellyide-wt/<branch with / replaced by ->`.
 
-**State at this handover (planner restarted you to add T16/T17):**
-- Running workers (detached) keep running: T11-dev-r2, T12-dev-r2 (lane A), T13-dev-r1, T6a-dev-r1b, T6b-dev-r1 (lane B). Do not redispatch them; collect their results with `wait.sh`. Check `status.sh` and the job logs to reconstruct each task's round.
-- New: T17 (urgent data-loss fix) and T16 (sync conflicts). Both briefs were merged in the planner's PR.
-- T11's next review must also check that the editor will be able to send `expected_version` later (T16 adds it). Nothing to build now.
+**State at this handover (planner restarted you to add T19 and the inbox):** your own STATUS.md is accurate, so trust it. Workers still running are detached; collect them with `wait.sh` and reconstruct rounds from `status.sh` and the job logs. T18 is your own brief; keep it in the queue.
+
+## Planner inbox (check it constantly)
+Your boss can add instructions without restarting you. **After every `wait.sh` return**, run `cat /home/tae5609/jellyide/docs/plan/logs/INBOX.md 2>/dev/null`.
+- Each item starts with `## <id>`. Act on every item that does not yet have a line `DONE <id>` in `/home/tae5609/jellyide/docs/plan/logs/INBOX.done`.
+- Items can add queue rows (new briefs merged to main: run `git pull` first), change priorities, or tell you to stop or redo something. Inbox items override this file where they conflict.
+- When an item is handled, append `DONE <id> <short note>` to `INBOX.done`, and mention it in STATUS.md.
 
 ## Per-task loop
 1. **Prepare**: in `/home/tae5609/jellyide`, run `git fetch origin && git checkout main && git pull --ff-only`. Create the worktree if missing: `git worktree add -b <branch> <path> origin/main`.

@@ -10,7 +10,8 @@ Scope, as set by the owner on 2026-11-21:
 7. Clear project documentation: architecture, deployment, auth, metadata guide, API, development.
 8. Download reliability: retry failed downloads (manual button and automatic for transient errors), plus admin-managed yt-dlp updates (check, update, rollback, auto-update).
 9. Sync safety: never overwrite files on rename (T17, urgent); detect DB/file/concurrent-user conflicts and let the user choose the resolution per field (T16, default policy `ask`).
-10. Conventional Commits and consistent PRs (`docs/plan/CONVENTIONS.md`, `.github/pull_request_template.md`).
+10. Admin onboarding and recovery: first-run setup wizard (token printed to logs) when `ADMIN_PASSWORD` is unset, plus a `./server admin …` recovery CLI and an audit log (T19).
+11. Conventional Commits and consistent PRs (`docs/plan/CONVENTIONS.md`, `.github/pull_request_template.md`).
 
 ## Current state (2026-11-21)
 - Backend: Go 1.25, gorilla/mux, sqlx + modernc sqlite (`backend/internal/db/db.go`, split read/write pools, `migrate()` builds the schema).
@@ -127,6 +128,7 @@ Waves (dependency order; each task has a brief in `docs/plan/tasks/`):
 | 4 | T15 yt-dlp updater | `feat/ytdlp-updater` | T12, T13 |
 | 4 | T17 no-overwrite rename (URGENT) | `fix/no-overwrite-rename` | T12 |
 | 4 | T16 sync conflicts | `feat/sync-conflicts` | T11, T17 |
+| 4 | T19 setup wizard + admin recovery CLI | `feat/admin-setup-recovery` | T12, T6b |
 | 5 | T9 frontend lint/format/tests | `test/frontend-quality` | all frontend work (T11, T13, T14, T15, T16) |
 | 5 | T6 project documentation + smoke test | `docs/project-docs` | everything |
 | 6 | follow-ups the product owner creates from BUGS.md | `fix/*` | – |
