@@ -111,8 +111,9 @@ func (s *Service) UserFromRequest(r *http.Request) (*User, error) {
 	}
 
 	user, err := s.GetUserByID(row.UserID)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The user was deleted; drop the orphaned session.
+	if errors.Is(err, ErrNoUser) {
+		// The user was deleted; drop the orphaned session. GetUserByID
+		// maps sql.ErrNoRows to ErrNoUser, so compare against that.
 		_, _ = s.db.Exec(`DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
 		return nil, ErrNoSession
 	}

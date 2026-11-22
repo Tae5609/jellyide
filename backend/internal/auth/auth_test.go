@@ -3,7 +3,10 @@ package auth
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"yt-scraper/internal/db"
 
@@ -732,6 +736,46 @@ func TestLoginRateLimitTrustProxy(t *testing.T) {
 			t.Fatalf("victim: got %d, want 401", rec.Code)
 		}
 	})
+}
+
+// Regression: a session row pointing at a deleted user (orphaned session)
+// must be dropped and reported as "no valid session". GetUserByID maps
+// sql.ErrNoRows to ErrNoUser, so the check must compare against ErrNoUser;
+// comparing against sql.ErrNoRows was dead code and the error leaked
+// instead of the session being cleaned up.
+func TestUserFromRequestDropsOrphanedSession(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	const token = "orphan-session-token"
+	sum := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(sum[:])
+	// The sessions FK would refuse the row, so switch it off on the write
+	// connection just for the insert and back on before continuing.
+	if _, err := svc.DB().Exec("PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("pragma off: %v", err)
+	}
+	if _, err := svc.DB().Exec(
+		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)`,
+		tokenHash, "missing-user-id", formatTime(time.Now().Add(time.Hour))); err != nil {
+		t.Fatalf("insert orphaned session: %v", err)
+	}
+	if _, err := svc.DB().Exec("PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("pragma on: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	_, err := svc.UserFromRequest(req)
+	if !errors.Is(err, ErrNoSession) {
+		t.Fatalf("UserFromRequest err = %v, want ErrNoSession", err)
+	}
+	var n int
+	if err := svc.db.Get(&n, `SELECT COUNT(*) FROM sessions WHERE token_hash = ?`, tokenHash); err != nil {
+		t.Fatalf("count session: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("orphaned session row still present: %d, want 0", n)
+	}
 }
 
 // Regression: oversized JSON bodies are rejected with 413 before any of
