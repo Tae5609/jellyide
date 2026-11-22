@@ -225,7 +225,7 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.limiter.blocked(ip) {
 		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
@@ -303,7 +303,7 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.limiter.blocked(ip) {
 		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
@@ -421,8 +421,23 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// clientIP extracts the peer IP from RemoteAddr.
-func clientIP(r *http.Request) string {
+// clientIP returns the address used for rate limiting. Behind a trusted
+// proxy the first X-Forwarded-For hop wins; otherwise the direct peer is
+// used so a client cannot spoof the header.
+func (s *Service) clientIP(r *http.Request) string {
+	if s.cfg.TrustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			first := strings.TrimSpace(strings.Split(xff, ",")[0])
+			if ip := net.ParseIP(first); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+	return peerIP(r)
+}
+
+// peerIP extracts the peer IP from RemoteAddr.
+func peerIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
