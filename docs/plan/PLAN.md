@@ -108,7 +108,7 @@ Agents are defined in `scripts/agents/opencode-agents/` and installed globally w
 - Workers: `jelly-dev` / `jelly-reviewer` (lane A, Orion key A, 27B), `jelly-dev-b` / `jelly-reviewer-b` (lane B, Orion key B, 27B), and `jelly-fast-b` (lane B, Flash-Next, for docs and mechanical fixes).
 - Dispatch is non-blocking through `scripts/agents/dispatch.sh`, `wait.sh` and `status.sh`. Each worker is its own `opencode run` process (logs in `docs/plan/logs/jobs/`).
 
-Concurrency: 6 Orion requests in total. Lane A has the orchestrator plus 2 workers, and lane B has 3 workers.
+Concurrency: 6 workers (3 per Orion key). The orchestrator shares key A but is idle while it waits; rare overlaps are retried by opencode.
 Launch: `opencode run --pure --agent orchestrator --auto --dir /home/tae5609/jellyide "Resume the roadmap"`.
 
 Waves (dependency order; each task has a brief in `docs/plan/tasks/`):
