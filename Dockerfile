@@ -4,7 +4,7 @@ COPY backend/go.mod .
 RUN go mod download
 COPY backend/ .
 RUN go mod tidy
-RUN CGO_ENABLED=0 GOOS=linux go build -o server main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o server .
 
 FROM node:20-alpine AS frontend
 WORKDIR /app
