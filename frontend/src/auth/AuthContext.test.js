@@ -1,4 +1,4 @@
-import React, { act } from 'react';
+import React, { act, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { apiFetch } from '../api';
 import { AuthProvider, useAuth } from './AuthContext';
@@ -144,5 +144,59 @@ describe('AuthProvider session handling', () => {
       container.querySelector('[data-testid="providers"]').textContent
     ).toBe('off');
     await unmount();
+  });
+
+  // The login-CSRF wiring: login() must fetch the token from
+  // /auth/csrf and send it in the login body, so the backend's
+  // double-submit check passes.
+  test('login sends the login-CSRF token from /auth/csrf', async () => {
+    const calls = [];
+    global.fetch = jest.fn(async (url, opts) => {
+      calls.push({ url, body: opts && opts.body });
+      if (url === '/api/auth/csrf') {
+        return new Response(JSON.stringify({ token: 'csrf-123' }), {
+          status: 200,
+        });
+      }
+      if (url === '/api/auth/login') {
+        return new Response(JSON.stringify(userBody), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401,
+      });
+    });
+
+    let loginFn;
+    function LoginProbe() {
+      const { login } = useAuth();
+      useEffect(() => {
+        loginFn = login;
+      }, [login]);
+      return null;
+    }
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <AuthProvider>
+          <LoginProbe />
+        </AuthProvider>
+      );
+    });
+
+    await act(async () => {
+      await loginFn('admin', 'password-123');
+    });
+
+    expect(calls.some((c) => c.url === '/api/auth/csrf')).toBe(true);
+    const loginCall = calls.find((c) => c.url === '/api/auth/login');
+    expect(loginCall).toBeTruthy();
+    const sent = JSON.parse(loginCall.body);
+    expect(sent.csrf_token).toBe('csrf-123');
+    expect(sent.username).toBe('admin');
+    await act(async () => {
+      root.unmount();
+    });
   });
 });

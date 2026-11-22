@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -159,6 +162,7 @@ func init() {
 // are mounted only when OIDC has been enabled at startup.
 func (s *Service) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/auth/providers", s.handleProviders).Methods(http.MethodGet)
+	r.HandleFunc("/auth/csrf", s.handleLoginCSRF).Methods(http.MethodGet)
 	r.HandleFunc("/auth/login", s.handleLogin).Methods(http.MethodPost)
 	r.HandleFunc("/auth/logout", s.handleLogout).Methods(http.MethodPost)
 	r.HandleFunc("/auth/me", s.handleMe).Methods(http.MethodGet)
@@ -196,6 +200,53 @@ func ValidUsername(username string) bool {
 
 // MinPasswordLength is the shortest accepted password.
 const MinPasswordLength = 8
+
+// loginCSRFCookieName is the double-submit cookie carrying the login-CSRF
+// token. GET /auth/csrf sets the cookie and returns the same value in the
+// response body; the login form must echo the token in the login body.
+const loginCSRFCookieName = "jellyide_login_csrf"
+
+// loginCSRFMaxAge bounds how long an issued login-CSRF token stays valid.
+const loginCSRFMaxAge = time.Hour
+
+// handleLoginCSRF: GET /api/auth/csrf (public). Issues the login-CSRF
+// token: a random value returned in the body and mirrored in a SameSite=Lax
+// cookie. A cross-site page can read neither half of the pair — the body
+// is same-origin only (no CORS) and the Lax cookie is not attached to
+// cross-site POSTs — so a forged login can never carry a matching token.
+func (s *Service) handleLoginCSRF(w http.ResponseWriter, _ *http.Request) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 - the Secure flag is deliberately config-driven (COOKIE_SECURE)
+		Name:     loginCSRFCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cfg.CookieSecure,
+		MaxAge:   int(loginCSRFMaxAge.Seconds()),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+// verifyLoginCSRF implements the double-submit login-CSRF check: the
+// csrf_token in the login body must equal the login-CSRF cookie. A
+// cross-site attacker can read neither the cookie (opaque to other origins
+// and not sent on cross-site POSTs) nor a fresh token (no CORS), so a
+// forged login POST gets 403 instead of pinning the victim's browser onto
+// the attacker's account.
+func verifyLoginCSRF(w http.ResponseWriter, r *http.Request, token string) bool {
+	cookie, err := r.Cookie(loginCSRFCookieName)
+	if err != nil || token == "" || !hmac.Equal([]byte(cookie.Value), []byte(token)) {
+		writeJSONError(w, http.StatusForbidden, "login csrf mismatch")
+		return false
+	}
+	return true
+}
 
 // handleRegister: POST /api/auth/register (public).
 // Creates a local user in open or approval mode; in admin_only mode the
@@ -291,17 +342,24 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"status": status})
 }
 
-// handleLogin: POST /api/auth/login
+// handleLogin: POST /api/auth/login. The body must carry the login-CSRF
+// token from GET /auth/csrf (double-submit, see verifyLoginCSRF): the
+// endpoint is public, so without the token a cross-site form POST could
+// pin the victim's browser onto the attacker's account.
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		CSRFToken string `json:"csrf_token"`
 	}
 	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !s.cfg.LocalEnabled {
 		writeJSONError(w, http.StatusForbidden, "local login disabled")
+		return
+	}
+	if !verifyLoginCSRF(w, r, req.CSRFToken) {
 		return
 	}
 

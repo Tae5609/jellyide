@@ -99,10 +99,38 @@ func cookieValue(t *testing.T, rec *httptest.ResponseRecorder, name string) stri
 	return ""
 }
 
+// fetchLoginCSRF grabs a login-CSRF token and its double-submit cookie
+// from GET /api/auth/csrf.
+func fetchLoginCSRF(t *testing.T, h http.Handler) (token, cookie string) {
+	t.Helper()
+	rec := doReq(t, h, http.MethodGet, "/api/auth/csrf", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("csrf: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody(t, rec)
+	token, _ = body["token"].(string)
+	if token == "" {
+		t.Fatal("csrf response has no token")
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "jellyide_login_csrf" {
+			cookie = c.Name + "=" + c.Value
+		}
+	}
+	if cookie != "jellyide_login_csrf="+token {
+		t.Fatalf("csrf cookie %q does not match the body token (double-submit premise)", cookie)
+	}
+	return token, cookie
+}
+
+// login fetches a login-CSRF token and performs a local login with it.
 func login(t *testing.T, h http.Handler, username, password string) *httptest.ResponseRecorder {
 	t.Helper()
+	token, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
 	return doReq(t, h, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password}, nil)
+		map[string]string{"username": username, "password": password, "csrf_token": token}, hdr)
 }
 
 func sessionHeader(t *testing.T, token string, xrw bool) http.Header {
@@ -677,12 +705,15 @@ func TestLoginRateLimitTrustProxy(t *testing.T) {
 		otherPeer    = "10.0.0.2:40000"
 		victimPeer   = "198.51.100.9:55555"
 	)
-	badLogin := `{"username":"nobody","password":"wrong-password-1"}`
+	// A valid double-submit pair (matching cookie and body token) so the
+	// attempts reach the credential check and feed the limiter.
+	badLogin := `{"username":"nobody","password":"wrong-password-1","csrf_token":"trust-proxy-test-token"}`
 
 	post := func(t *testing.T, h http.Handler, peer, xff string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(badLogin))
 		req.RemoteAddr = peer
+		req.Header.Set("Cookie", "jellyide_login_csrf=trust-proxy-test-token")
 		if xff != "" {
 			req.Header.Set("X-Forwarded-For", xff)
 		}
@@ -738,6 +769,71 @@ func TestLoginRateLimitTrustProxy(t *testing.T) {
 	})
 }
 
+// TestLoginCSRFTokenFlow: the double-submit flow works end to end —
+// GET /auth/csrf issues the token (body + SameSite=Lax cookie), and the
+// login POST carrying the matching pair succeeds.
+func TestLoginCSRFTokenFlow(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+
+	token, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
+	rec := doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword, "csrf_token": token}, hdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login with valid token pair: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if cookieValue(t, rec, SessionCookieName) == "" {
+		t.Fatal("valid login did not set a session cookie")
+	}
+}
+
+// TestLoginCSRFRejection: a cross-site request cannot carry the token
+// pair. Missing token, missing cookie and a mismatched pair are all
+// rejected with 403 before any credential work, and no session is created.
+func TestLoginCSRFRejection(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+
+	// Cross-site form POST: no cookie, no token.
+	rec := doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("no token: got %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if msg := decodeBody(t, rec)["error"]; msg != "login csrf mismatch" {
+		t.Fatalf("no token error = %v", msg)
+	}
+
+	// Token in the body but the cookie is absent (the attacker cannot
+	// read the victim's cookie).
+	rec = doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword, "csrf_token": "forged-token"}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("forged token, no cookie: got %d, want 403", rec.Code)
+	}
+
+	// Cookie present, body token mismatched.
+	_, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
+	rec = doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword, "csrf_token": "wrong-token"}, hdr)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("mismatched pair: got %d, want 403", rec.Code)
+	}
+
+	// None of the rejected attempts pinned a session onto the victim.
+	var n int
+	if err := svc.db.Get(&n, `SELECT COUNT(*) FROM sessions`); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("sessions created by rejected logins = %d, want 0", n)
+	}
+}
+
 // Regression: a session row pointing at a deleted user (orphaned session)
 // must be dropped and reported as "no valid session". GetUserByID maps
 // sql.ErrNoRows to ErrNoUser, so the check must compare against ErrNoUser;
@@ -764,7 +860,9 @@ func TestUserFromRequestDropsOrphanedSession(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	// The request cookie mirrors the real session cookie flags (Secure is
+	// unconditionally true here; it is config-driven only on the way out).
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 	_, err := svc.UserFromRequest(req)
 	if !errors.Is(err, ErrNoSession) {
 		t.Fatalf("UserFromRequest err = %v, want ErrNoSession", err)
