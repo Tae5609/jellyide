@@ -2,6 +2,24 @@
 # Block until at least one job finishes (or timeout), then print its report.
 # Usage: wait.sh [timeout-seconds, default 480]
 RUN=/home/tae5609/jellyide/docs/plan/logs/jobs
+LOGS=/home/tae5609/jellyide/docs/plan/logs
+
+# Print planner inbox items that are not yet in INBOX.done. Planner orders
+# override everything; they are printed on every return so they cannot be missed.
+inbox() {
+  [ -s "$LOGS/INBOX.md" ] || return 0
+  local pending=""
+  for id in $(grep -oP '^## \K\S+' "$LOGS/INBOX.md"); do
+    grep -q "^DONE $id\b" "$LOGS/INBOX.done" 2>/dev/null || pending="$pending $id"
+  done
+  [ -z "$pending" ] && return 0
+  echo
+  echo "!!!!! PLANNER INBOX: UNHANDLED ORDERS:$pending !!!!!"
+  echo "Handle each BEFORE dispatching anything else, then append 'DONE <id> <note>' to $LOGS/INBOX.done:"
+  for id in $pending; do
+    awk -v id="$id" '/^## /{p=($2==id)} p' "$LOGS/INBOX.md"
+  done
+}
 deadline=$(( $(date +%s) + ${1:-480} ))
 while :; do
   found=0
@@ -25,7 +43,7 @@ while :; do
       sed 's/\x1b\[[0-9;]*m//g' "$RUN/$n.log" | tail -20
     fi
   done
-  [ $found -eq 1 ] && { "$(dirname "$0")/status.sh"; exit 0; }
-  [ "$(date +%s)" -ge "$deadline" ] && { echo "NONE_FINISHED"; "$(dirname "$0")/status.sh"; exit 0; }
+  [ $found -eq 1 ] && { "$(dirname "$0")/status.sh"; inbox; exit 0; }
+  [ "$(date +%s)" -ge "$deadline" ] && { echo "NONE_FINISHED"; "$(dirname "$0")/status.sh"; inbox; exit 0; }
   sleep 15
 done
