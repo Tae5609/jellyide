@@ -8,7 +8,8 @@ Scope, as set by the owner on 2026-11-21:
 5. Fix known bugs (`docs/plan/BUGS.md`) and harden security.
 6. Comprehensive quality: unit tests, golangci-lint, ESLint, Prettier, ruff, CI gates.
 7. Clear project documentation: architecture, deployment, auth, metadata guide, API, development.
-8. Conventional Commits and consistent PRs (`docs/plan/CONVENTIONS.md`, `.github/pull_request_template.md`).
+8. Download reliability: retry failed downloads (manual button and automatic for transient errors), plus admin-managed yt-dlp updates (check, update, rollback, auto-update).
+9. Conventional Commits and consistent PRs (`docs/plan/CONVENTIONS.md`, `.github/pull_request_template.md`).
 
 ## Current state (2026-11-21)
 - Backend: Go 1.25, gorilla/mux, sqlx + modernc sqlite (`backend/internal/db/db.go`, split read/write pools, `migrate()` builds the schema).
@@ -121,7 +122,9 @@ Waves (dependency order; each task has a brief in `docs/plan/tasks/`):
 | 3 | T10 metadata backend (fields, cover, history, MusicBrainz) | `feat/metadata-fields` | T7 |
 | 4 | T11 metadata editor UI + shortcuts | `feat/metadata-editor-ui` | T10 |
 | 4 | T12 backend bug hunt + hardening | `fix/backend-hardening` | T10 |
-| 5 | T9 frontend lint/format/tests | `test/frontend-quality` | all frontend work |
+| 4 | T14 download retry | `feat/download-retry` | T12 |
+| 4 | T15 yt-dlp updater | `feat/ytdlp-updater` | T12, T13 |
+| 5 | T9 frontend lint/format/tests | `test/frontend-quality` | all frontend work (T11, T13, T14, T15) |
 | 5 | T6 project documentation + smoke test | `docs/project-docs` | everything |
 | 6 | follow-ups the product owner creates from BUGS.md | `fix/*` | – |
 
