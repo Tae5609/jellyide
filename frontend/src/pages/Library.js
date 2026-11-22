@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useModal } from '../components/ModalContext';
 import { apiFetch } from '../api';
 
 export default function Library() {
   const { artistId } = useParams();
   const navigate = useNavigate();
+  const { showAlert } = useModal();
   const [artists, setArtists] = useState([]);
   const [albums, setAlbums] = useState([]);
   const [scanning, setScanning] = useState(false);
@@ -42,12 +44,12 @@ export default function Library() {
     try {
       const res = await apiFetch('/library/scan', { method: 'POST' });
       if (res.ok) {
-        alert('Library scan started!');
+        showAlert('Library scan started', 'The scan runs in the background. Follow its progress in the Jobs tab.');
       } else {
         throw new Error("Failed to start scan");
       }
     } catch (e) {
-      alert(e.message);
+      showAlert('Error', e.message);
     }
     setScanning(false);
   };
