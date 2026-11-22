@@ -13,5 +13,5 @@ done
 for l in A B; do
   c=0; for f in "$RUN"/*.pid; do [ -e "$f" ] || continue
     kill -0 "$(cat "$f")" 2>/dev/null && [ "$(cat "${f%.pid}.lane")" = "$l" ] && c=$((c+1)); done
-  echo "lane $l running: $c / $([ $l = A ] && echo 2 || echo 3)"
+  echo "lane $l running: $c / 2"
 done
