@@ -341,3 +341,64 @@ func TestQueueDownloadAndLimits(t *testing.T) {
 		t.Fatal("queued id was not delivered")
 	}
 }
+
+// newEnvTestDownloader builds a Downloader through the real NewDownloader
+// (dispatcher included) backed by a temp-dir SQLite database and music dir,
+// so CONCURRENT_DOWNLOAD is resolved exactly like in production.
+func newEnvTestDownloader(t *testing.T) *Downloader {
+	t.Helper()
+	dir := t.TempDir()
+	database, err := db.NewDB(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	libService := library.NewService(database, dir)
+	jm := jobs.NewManager(database)
+	sc := scanner.NewScanner(libService, jm, dir)
+	return NewDownloader(jm, sc, dir)
+}
+
+// TestNewDownloaderConcurrentDownloadEnv is the regression test: before the
+// fix NewDownloader hard-coded concurrentLimit: 2 and never read the
+// CONCURRENT_DOWNLOAD env var, so this case failed.
+func TestNewDownloaderConcurrentDownloadEnv(t *testing.T) {
+	t.Setenv("CONCURRENT_DOWNLOAD", "5")
+
+	d := newEnvTestDownloader(t)
+	if got := d.GetLimit(); got != 5 {
+		t.Fatalf("limit = %d, want 5 (CONCURRENT_DOWNLOAD=5)", got)
+	}
+}
+
+func TestNewDownloaderConcurrentDownloadEnvInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{"empty", ""},
+		{"not a number", "abc"},
+		{"zero", "0"},
+		{"negative", "-3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CONCURRENT_DOWNLOAD", tt.raw)
+
+			d := newEnvTestDownloader(t)
+			if got := d.GetLimit(); got != 2 {
+				t.Fatalf("limit = %d, want default 2 for CONCURRENT_DOWNLOAD=%q", got, tt.raw)
+			}
+		})
+	}
+}
+
+func TestNewDownloaderConcurrentDownloadEnvClamped(t *testing.T) {
+	t.Setenv("CONCURRENT_DOWNLOAD", "999")
+
+	d := newEnvTestDownloader(t)
+	if got := d.GetLimit(); got != 32 {
+		t.Fatalf("limit = %d, want clamped to 32", got)
+	}
+}

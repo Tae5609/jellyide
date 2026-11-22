@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -40,13 +41,38 @@ type Downloader struct {
 
 // NewDownloader builds a Downloader, re-queues unfinished download jobs
 // found in the database and starts the dispatcher.
+//
+// The initial concurrency limit is resolved with the precedence
+// CONCURRENT_DOWNLOAD env var -> default 2 -> runtime SetLimit: the env var
+// wins at startup; a missing, unparseable or below-1 value falls back to
+// the default of 2 with a warning, and a value above 32 is clamped to 32
+// with a warning. SetLimit (e.g. via POST /api/config) still overrides the
+// limit afterwards.
 func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir string) *Downloader {
+	limit := 2
+	raw := os.Getenv("CONCURRENT_DOWNLOAD")
+	n, err := strconv.Atoi(raw)
+	switch {
+	case raw == "":
+		log.Printf("download: CONCURRENT_DOWNLOAD is not set, using default %d", limit)
+	case err != nil:
+		// The raw value is not logged: it is env input (gosec G706).
+		log.Printf("download: CONCURRENT_DOWNLOAD is not a valid integer, using default %d", limit)
+	case n < 1:
+		log.Printf("download: CONCURRENT_DOWNLOAD=%d is below 1, using default %d", n, limit)
+	case n > 32:
+		log.Printf("download: CONCURRENT_DOWNLOAD=%d exceeds the maximum of 32, clamping", n)
+		limit = 32
+	default:
+		limit = n
+	}
+
 	d := &Downloader{
 		jobManager:      jobManager,
 		scanner:         s,
 		downloadDir:     downloadDir,
 		queue:           make(chan string, 5000), // Increased buffer
-		concurrentLimit: 2,
+		concurrentLimit: limit,
 		ytDlpPath:       "yt-dlp",
 	}
 	d.cond = sync.NewCond(&d.mu)
