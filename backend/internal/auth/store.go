@@ -77,6 +77,14 @@ func (s *Service) UpdatePassword(id, passwordHash string) error {
 	return err
 }
 
+// UpdateExternalIdentity syncs the mutable identity fields (email, display
+// name, admin flag) for an existing external-provider user on each login.
+func (s *Service) UpdateExternalIdentity(id, email, displayName string, isAdmin bool) error {
+	_, err := s.db.Exec(`UPDATE users SET email = ?, display_name = ?, is_admin = ? WHERE id = ?`,
+		strPtrOrNil(email), strPtrOrNil(displayName), isAdmin, id)
+	return err
+}
+
 // TouchLastLogin records the current time as the user's last login.
 func (s *Service) TouchLastLogin(id string) error {
 	_, err := s.db.Exec(`UPDATE users SET last_login = ? WHERE id = ?`, formatTime(time.Now().UTC()), id)

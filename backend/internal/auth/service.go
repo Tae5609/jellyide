@@ -16,6 +16,7 @@ type Service struct {
 	db        *db.DB
 	providers *providerState
 	limiter   *loginLimiter
+	oidc      *oidcState // set by EnableOIDC at startup; non-nil when OIDC is on
 }
 
 // NewService builds the auth service and bootstraps the admin account when

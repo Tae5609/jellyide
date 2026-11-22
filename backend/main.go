@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -48,6 +49,16 @@ func main() {
 			log.Printf("Failed to close database: %v", cerr)
 		}
 		log.Fatal("Failed to initialize auth: ", err)
+	}
+
+	// Enable OIDC before the routes are registered (they depend on it).
+	if oc := auth.LoadOIDCConfig(); oc.Enabled {
+		if err := authSvc.EnableOIDC(context.Background(), oc); err != nil {
+			if cerr := database.Close(); cerr != nil {
+				log.Printf("Failed to close database: %v", cerr)
+			}
+			log.Fatal("Failed to enable OIDC: ", err)
+		}
 	}
 
 	// Initialize Services

@@ -128,13 +128,17 @@ func init() {
 	}
 }
 
-// RegisterRoutes mounts the auth API on the /api subrouter.
+// RegisterRoutes mounts the auth API on the /api subrouter. The OIDC routes
+// are mounted only when OIDC has been enabled at startup.
 func (s *Service) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/auth/providers", s.handleProviders).Methods(http.MethodGet)
 	r.HandleFunc("/auth/login", s.handleLogin).Methods(http.MethodPost)
 	r.HandleFunc("/auth/logout", s.handleLogout).Methods(http.MethodPost)
 	r.HandleFunc("/auth/me", s.handleMe).Methods(http.MethodGet)
 	r.HandleFunc("/auth/password", s.handleChangePassword).Methods(http.MethodPost)
+	if s.oidc != nil {
+		s.registerOIDCRoutes(r)
+	}
 }
 
 // handleProviders: GET /api/auth/providers
