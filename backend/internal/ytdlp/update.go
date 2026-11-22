@@ -17,7 +17,8 @@ import (
 
 // Errors surfaced by the update pipeline.
 var (
-	// ErrUpdateRunning is returned when an update is already in flight.
+	// ErrUpdateRunning is returned when an update is already in flight;
+	// Rollback returns it too, because it shares the same update slot.
 	ErrUpdateRunning = errors.New("an update is already running")
 	// ErrUpToDate is returned when no newer release is known.
 	ErrUpToDate = errors.New("already up to date")
@@ -225,12 +226,32 @@ func (m *Manager) swap(tmp string) error {
 }
 
 // Rollback swaps the parked yt-dlp.prev back into place, discarding the
-// current binary. It returns ErrNoRollback when no previous binary exists.
+// current binary. It returns ErrNoRollback when no previous binary exists
+// and ErrUpdateRunning when an update (or another rollback) is in flight.
+//
+// Rollback shares the single update slot with updates, so the two are
+// mutually exclusive: a rollback racing an in-flight update could hit the
+// swap window or be clobbered by it, and the brief's guarantee is that a
+// failure never breaks downloads because the old binary stays. It is
+// refused rather than blocked because an update can hold the slot for up
+// to the idle timeout (10 minutes) waiting for running downloads; the
+// API answers 409 and the admin can retry once the update is done.
+//
+// The remove/rename window below is quiesced exactly like an update, so
+// no download starts or runs while no binary exists at all.
 func (m *Manager) Rollback() error {
+	if !m.beginUpdate() {
+		return ErrUpdateRunning
+	}
+	defer m.endUpdate()
+
 	bin := m.BinPath()
 	prev := m.prevPath()
 	if _, err := os.Stat(prev); err != nil {
 		return ErrNoRollback
+	}
+	if err := m.quiesce(); err != nil {
+		return err
 	}
 	if m.HasBinary() {
 		if err := os.Remove(bin); err != nil {

@@ -72,15 +72,20 @@ func ytdlpUpdate(m *ytdlp.Manager) http.HandlerFunc {
 }
 
 // ytdlpRollback: POST /api/admin/ytdlp/rollback. 409 when there is no
-// previous binary to restore.
+// previous binary to restore, or when an update is already running
+// (rollback shares the update slot with updates and is refused, not
+// blocked, while one is in flight).
 func ytdlpRollback(m *ytdlp.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if err := m.Rollback(); err != nil {
-			if errors.Is(err, ytdlp.ErrNoRollback) {
+			switch {
+			case errors.Is(err, ytdlp.ErrNoRollback):
 				sendJSONError(w, "no previous binary to roll back to", http.StatusConflict)
-				return
+			case errors.Is(err, ytdlp.ErrUpdateRunning):
+				sendJSONError(w, "an update is already running", http.StatusConflict)
+			default:
+				sendJSONError(w, "rollback failed", http.StatusInternalServerError)
 			}
-			sendJSONError(w, "rollback failed", http.StatusInternalServerError)
 			return
 		}
 		st, err := m.Status()

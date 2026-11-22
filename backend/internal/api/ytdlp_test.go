@@ -83,15 +83,24 @@ func newAuthedRouter(t *testing.T, st *fakeRelease) (http.Handler, *auth.Service
 
 // fakeRelease is a mutable fake of the GitHub release endpoints.
 type fakeRelease struct {
-	mu     sync.Mutex
-	tag    string
-	script string
-	sums   string
+	mu            sync.Mutex
+	tag           string
+	script        string
+	sums          string
+	downloadDelay time.Duration
 }
 
 func (fr *fakeRelease) set(tag, script, sums string) {
 	fr.mu.Lock()
 	fr.tag, fr.script, fr.sums = tag, script, sums
+	fr.mu.Unlock()
+}
+
+// setDelay slows the binary download so an update stays in flight long
+// enough to race with other requests.
+func (fr *fakeRelease) setDelay(d time.Duration) {
+	fr.mu.Lock()
+	fr.downloadDelay = d
 	fr.mu.Unlock()
 }
 
@@ -109,6 +118,9 @@ func newFakeReleaseServer(fr *fakeRelease) *httptest.Server {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"tag_name":"` + fr.tag + `"}`))
 		case "/download/yt-dlp":
+			if fr.downloadDelay > 0 {
+				time.Sleep(fr.downloadDelay)
+			}
 			_, _ = w.Write([]byte(fr.script))
 		case "/download/SHA2-256SUMS":
 			_, _ = w.Write([]byte(fr.sums))
@@ -403,5 +415,86 @@ func TestYtDlpAdminEndpoints(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("settings %s: got %d, want 400: %s", body, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// TestRollbackRejectedWhileUpdateInFlight: a rollback racing an in-flight
+// update is refused with 409 and leaves both binaries in place; once the
+// update completes, the same rollback succeeds. The binary download is
+// slowed down so the update is verifiably in flight.
+func TestRollbackRejectedWhileUpdateInFlight(t *testing.T) {
+	fr := &fakeRelease{tag: "2025.1.15", script: fakeScript("2025.1.15"), sums: sumsForScript(fakeScript("2025.1.15"))}
+	h, _, yt, jm := newAuthedRouter(t, fr)
+	admin := loginToken(t, h, "admin", "admin-password-1")
+
+	// First install: 2025.1.15 becomes the managed binary.
+	rec := apiReq(t, h, http.MethodPost, "/api/admin/ytdlp/update", admin, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("first update: got %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	var upd map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &upd); err != nil {
+		t.Fatalf("decode first update: %v", err)
+	}
+	if job := waitForJobStatus(t, jm, upd["job_id"]); job.Status != jobs.StatusCompleted {
+		t.Fatalf("first update job = %s (error: %s), want completed", job.Status, job.Error)
+	}
+
+	// Prepare a slower second release so the update stays in flight long
+	// enough to race with the rollback.
+	fr.set("2025.2.2", fakeScript("2025.2.2"), sumsForScript(fakeScript("2025.2.2")))
+	fr.setDelay(2 * time.Second)
+
+	rec = apiReq(t, h, http.MethodPost, "/api/admin/ytdlp/update", admin, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("second update: got %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &upd); err != nil {
+		t.Fatalf("decode second update: %v", err)
+	}
+
+	// Wait until the status reports the update in flight.
+	var st map[string]interface{}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rec = apiReq(t, h, http.MethodGet, "/api/admin/ytdlp", admin, nil)
+		if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+			t.Fatalf("decode status: %v", err)
+		}
+		if st["updating"] == true {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the update never reported updating=true")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// A rollback racing the in-flight update is refused with 409.
+	rec = apiReq(t, h, http.MethodPost, "/api/admin/ytdlp/rollback", admin, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("rollback while an update is running: got %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "an update is already running") {
+		t.Fatalf("409 body = %q, want the in-flight update message", rec.Body.String())
+	}
+
+	// The update finishes with the new binary and a rollback candidate;
+	// the refused rollback touched nothing.
+	job := waitForJobStatus(t, jm, upd["job_id"])
+	if job.Status != jobs.StatusCompleted {
+		t.Fatalf("second update job = %s (error: %s), want completed", job.Status, job.Error)
+	}
+	if yt.Version() != "2025.2.2" {
+		t.Fatalf("version after the update = %q, want 2025.2.2", yt.Version())
+	}
+
+	// With the slot free the same rollback now succeeds.
+	rec = apiReq(t, h, http.MethodPost, "/api/admin/ytdlp/rollback", admin, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback after the update finished: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if yt.Version() != "2025.1.15" {
+		t.Fatalf("version after rollback = %q, want 2025.1.15", yt.Version())
 	}
 }

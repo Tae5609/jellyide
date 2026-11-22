@@ -246,6 +246,72 @@ func TestRollback(t *testing.T) {
 	}
 }
 
+// TestRollbackWhileUpdateRunning: rollback and updates are mutually
+// exclusive through the single update slot. While the slot is held by an
+// in-flight update, Rollback is refused (ErrUpdateRunning -> 409) and
+// touches neither binary; once the slot frees it succeeds.
+func TestRollbackWhileUpdateRunning(t *testing.T) {
+	m, st, _ := newReleaseManager(t, "2025.1.15")
+	seedBinary(t, m, "2025.1.10")
+
+	st.set("2025.1.15", fakeBinary("2025.1.15"), sumsFor(fakeBinary("2025.1.15")))
+	if _, err := m.UpdateOnce(context.Background(), false); err != nil {
+		t.Fatalf("UpdateOnce: %v", err)
+	}
+
+	// Simulate an in-flight update holding the slot.
+	m.beginUpdate()
+	if err := m.Rollback(); !errors.Is(err, ErrUpdateRunning) {
+		t.Fatalf("Rollback while an update is running = %v, want ErrUpdateRunning", err)
+	}
+	m.endUpdate()
+
+	// The refused rollback must have touched nothing.
+	if got := m.Version(); got != "2025.1.15" {
+		t.Fatalf("version = %q, want 2025.1.15 untouched", got)
+	}
+	if !m.hasPrev() {
+		t.Fatal("the parked previous binary was consumed by a refused rollback")
+	}
+
+	// With the slot free the rollback goes through.
+	if err := m.Rollback(); err != nil {
+		t.Fatalf("Rollback after the update finished: %v", err)
+	}
+	if got := m.Version(); got != "2025.1.10" {
+		t.Fatalf("version after rollback = %q, want 2025.1.10", got)
+	}
+}
+
+// TestRollbackQuiescesThroughGate: the rollback remove/rename window
+// pauses the dispatcher and waits for running downloads, exactly like an
+// update, so no download can start (or run) while no binary exists.
+func TestRollbackQuiescesThroughGate(t *testing.T) {
+	m, st, _ := newReleaseManager(t, "2025.1.15")
+	seedBinary(t, m, "2025.1.10")
+
+	g := &fakeGate{}
+	m.gate = g
+	m.idleTimeout = time.Second
+
+	st.set("2025.1.15", fakeBinary("2025.1.15"), sumsFor(fakeBinary("2025.1.15")))
+	if _, err := m.UpdateOnce(context.Background(), false); err != nil {
+		t.Fatalf("UpdateOnce: %v", err)
+	}
+	g.paused, g.resumed = false, false
+
+	if err := m.Rollback(); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	paused, resumed := g.state()
+	if !paused || !resumed {
+		t.Fatalf("gate state = paused:%v resumed:%v, want both true", paused, resumed)
+	}
+	if got := m.Version(); got != "2025.1.10" {
+		t.Fatalf("version after rollback = %q, want 2025.1.10", got)
+	}
+}
+
 // fakeGate records pause/resume calls and reports a configurable
 // WaitForIdle outcome.
 type fakeGate struct {
