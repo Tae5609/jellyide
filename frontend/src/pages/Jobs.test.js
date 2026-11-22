@@ -283,4 +283,20 @@ describe('Jobs retry', () => {
     expect(container.textContent).not.toContain('retrying in');
     await unmount();
   });
+
+  test('queued job with a past next_retry_at shows no retrying-in badge', async () => {
+    // Deadline reached but the job is still queued (e.g. waiting on the
+    // concurrency limit): formatRetryIn returns null, so no badge at all —
+    // never "retrying in null".
+    const past = new Date(Date.now() - 30 * 1000).toISOString();
+    const { container, unmount } = await renderJobs(
+      jobsFetch([
+        makeJob({ id: 'dl-1', status: 'queued', next_retry_at: past }),
+      ]).impl
+    );
+    expect(container.querySelector('.retry-scheduled')).toBeNull();
+    expect(container.textContent).not.toContain('retrying in');
+    expect(container.textContent).not.toContain('null');
+    await unmount();
+  });
 });

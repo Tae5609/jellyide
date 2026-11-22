@@ -29,8 +29,12 @@ function isFailedDownload(job) {
   return job.type === 'download' && job.status === 'failed';
 }
 
+// isRetryScheduled is true only while the badge has a countdown to show:
+// the job is queued and next_retry_at is still in the future. A queued job
+// whose deadline has already passed (waiting on the concurrency limit)
+// shows no badge rather than "retrying in null".
 function isRetryScheduled(job) {
-  return job.status === 'queued' && Boolean(job.next_retry_at);
+  return job.status === 'queued' && formatRetryIn(job.next_retry_at) !== null;
 }
 
 export default function Jobs() {
