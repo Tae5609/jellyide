@@ -409,6 +409,82 @@ func TestRenameAlbumTargetExists(t *testing.T) {
 	}
 }
 
+func TestRenameAlbumRejectsTraversal(t *testing.T) {
+	s, dir := newTestService(t)
+
+	artistID, err := s.EnsureArtist("Artist One")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "Old")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	oldDir := filepath.Join(dir, "Artist One", "Old")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(oldDir, "Song.flac"), 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+
+	for _, title := range []string{"..", ".", ""} {
+		if err := s.RenameAlbum(albumID, title); err == nil {
+			t.Fatalf("RenameAlbum(%q) should be rejected", title)
+		}
+	}
+	// The album directory must still be in place.
+	if _, err := os.Stat(oldDir); err != nil {
+		t.Fatalf("old dir disappeared: %v", err)
+	}
+	album, err := s.GetAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if album.Title != "Old" {
+		t.Fatalf("album title = %q, want unchanged", album.Title)
+	}
+}
+
+func TestRenameAlbumRejectsExistingTarget(t *testing.T) {
+	s, dir := newTestService(t)
+
+	artistID, err := s.EnsureArtist("Artist One")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "Old")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	oldDir := filepath.Join(dir, "Artist One", "Old")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(oldDir, "Song.flac"), 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "Artist One", "New"), 0o700); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+
+	if err := s.RenameAlbum(albumID, "New"); err == nil {
+		t.Fatal("RenameAlbum onto an existing directory should fail")
+	}
+	if _, err := os.Stat(oldDir); err != nil {
+		t.Fatalf("old dir disappeared: %v", err)
+	}
+}
+
+func TestAlbumDirRejectsEscape(t *testing.T) {
+	s, _ := newTestService(t)
+
+	album := &Album{ID: "missing", Artist: "..", Title: "x"}
+	if _, err := s.AlbumDir(album); err == nil {
+		t.Fatal("AlbumDir should reject an artist that escapes the music dir")
+	}
+}
+
 func TestDeleteAlbum(t *testing.T) {
 	s, dir := newTestService(t)
 

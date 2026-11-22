@@ -186,7 +186,17 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 
 	if len(tracks) > 0 {
 		oldPath := filepath.Dir(tracks[0].Path)
-		newPath := filepath.Join(filepath.Dir(oldPath), sanitizeFilename(newTitle))
+		if !withinDir(s.downloadDir, oldPath) {
+			return fmt.Errorf("library: album directory %q is outside the music dir", oldPath)
+		}
+		folder := sanitizeFilename(newTitle)
+		if folder == "" || folder == "." || folder == ".." {
+			return fmt.Errorf("library: invalid album title %q", newTitle)
+		}
+		newPath := filepath.Join(filepath.Dir(oldPath), folder)
+		if !withinDir(s.downloadDir, newPath) {
+			return fmt.Errorf("library: album title %q escapes the music dir", newTitle)
+		}
 
 		if oldPath != newPath {
 			if err := fsutil.SafeRename(oldPath, newPath); err != nil {
@@ -273,9 +283,17 @@ func (s *Service) AlbumDir(album *Album) (string, error) {
 		return "", err
 	}
 	if len(tracks) > 0 {
-		return filepath.Dir(tracks[0].Path), nil
+		dir := filepath.Dir(tracks[0].Path)
+		if !withinDir(s.downloadDir, dir) {
+			return "", fmt.Errorf("library: album directory %q is outside the music dir", dir)
+		}
+		return dir, nil
 	}
-	return filepath.Join(s.downloadDir, sanitizeFilename(album.Artist), sanitizeFilename(album.Title)), nil
+	dir := filepath.Join(s.downloadDir, sanitizeFilename(album.Artist), sanitizeFilename(album.Title))
+	if !withinDir(s.downloadDir, dir) {
+		return "", fmt.Errorf("library: album path %q escapes the music dir", dir)
+	}
+	return dir, nil
 }
 
 // SaveCoverArt writes cover bytes into the album directory as
@@ -323,7 +341,7 @@ func (s *Service) CoverFilePath(albumID string) (string, bool, error) {
 		return "", false, fmt.Errorf("invalid cover path %q", album.CoverArt)
 	}
 	full := filepath.Join(s.downloadDir, rel)
-	if full != s.downloadDir && !strings.HasPrefix(full, s.downloadDir+string(os.PathSeparator)) {
+	if !withinDir(s.downloadDir, full) {
 		return "", false, fmt.Errorf("cover path escapes the music dir")
 	}
 	return full, true, nil
@@ -378,6 +396,15 @@ func (s *Service) GetTrack(trackID string) (*Track, error) {
 	var track Track
 	err := s.db.Get(&track, "SELECT * FROM tracks WHERE id = ?", trackID)
 	return &track, err
+}
+
+// withinDir reports whether path is base itself or lies inside base.
+func withinDir(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 // sanitizeFilename replaces characters that are illegal in file names.
