@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ModalProvider } from '../../components/ModalContext';
@@ -141,6 +141,34 @@ describe('MetadataPage shortcuts', () => {
     expect(screen.getByTestId('cell-t1-album_artist').closest('td')).toHaveClass(
       'focused'
     );
+  });
+
+  test('hiding the focused column drops the cell focus', async () => {
+    const user = userEvent.setup();
+    const { container } = renderPage();
+    await screen.findByTestId('cell-t1-title');
+
+    // Focus the title cell and exit edit mode, keeping the cell focus.
+    await user.click(screen.getByTestId('cell-t1-title'));
+    await user.keyboard('{Escape}');
+
+    // Hide the focused column via the Columns menu.
+    await user.click(screen.getByRole('button', { name: /columns/i }));
+    await user.click(screen.getByRole('checkbox', { name: 'Title' }));
+    expect(screen.queryByTestId('cell-t1-title')).not.toBeInTheDocument();
+
+    // The cell focus is dropped with the column. Move focus off the menu
+    // checkbox (typing guard) so the shortcuts see a non-input target.
+    act(() => {
+      document.activeElement.blur();
+    });
+
+    // Keyboard navigation must not land on any cell: the stale focus
+    // pointed at the hidden column.
+    await user.keyboard('{ArrowRight}');
+    expect(container.querySelector('td.focused')).toBeNull();
+    await user.keyboard('{Enter}');
+    expect(document.querySelector('.md-cell-input')).toBeNull();
   });
 
   test('text commits are trimmed before becoming pending edits', async () => {
