@@ -108,15 +108,21 @@ export default function TrackGrid({
 
   const focusKey = focus ? `${focus.row}:${focus.col}` : '';
   const [draft, setDraft] = useState('');
+  const [draftToken, setDraftToken] = useState('');
   const closeSheet = () => setSheetTrackId(null);
 
-  // (Re)initialise the draft whenever a different cell enters edit mode.
-  useEffect(() => {
-    if (editing && focus && tracks[focus.row]) {
-      const v = currentValue(edits, tracks[focus.row], focus.col);
-      setDraft(textOf(v));
-    }
-  }, [editing, focusKey]);
+  // (Re)initialise the draft whenever a cell enters edit mode, including a
+  // re-edit of the same cell. Adjusting state during render (React's
+  // "adjust state when a prop changes" pattern) instead of in a passive
+  // effect keeps the first edit paint synchronous — the update no longer
+  // lands in a separate round-trip that tests see outside act().
+  const editToken = editing && focus && tracks[focus.row] ? focusKey : '';
+  if (editToken === '' && draftToken !== '') {
+    setDraftToken('');
+  } else if (editToken !== '' && draftToken !== editToken) {
+    setDraftToken(editToken);
+    setDraft(textOf(currentValue(edits, tracks[focus.row], focus.col)));
+  }
 
   // Close the column menu on outside click.
   useEffect(() => {

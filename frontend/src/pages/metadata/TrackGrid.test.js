@@ -127,6 +127,22 @@ describe('TrackGrid inline editing', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
+  test('re-editing the same cell starts from the current value again', async () => {
+    const user = userEvent.setup();
+    const { onCommitEdit } = renderGrid();
+
+    await user.click(screen.getByTestId('cell-t1-title'));
+    let input = screen.getByRole('textbox');
+    await user.type(input, 'J');
+    await user.keyboard('{Escape}');
+    expect(onCommitEdit).not.toHaveBeenCalled();
+
+    // The discarded text must not leak into the next edit of the same cell.
+    await user.click(screen.getByTestId('cell-t1-title'));
+    input = screen.getByRole('textbox');
+    expect(input).toHaveValue('One');
+  });
+
   test('Tab commits and moves to the next visible column', async () => {
     const user = userEvent.setup();
     const { onCommitEdit } = renderGrid();
