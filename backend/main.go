@@ -128,7 +128,7 @@ func main() {
 	if samlCfg.Enabled {
 		authSvc.RegisterSAMLRoutes(apiSub)
 	}
-	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner)
+	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, ytdlpMgr, authSvc.RequireAdmin)
 
 	// Serve media files
 	r.PathPrefix("/media/").Handler(http.StripPrefix("/media", newMediaHandler(downloadDir)))

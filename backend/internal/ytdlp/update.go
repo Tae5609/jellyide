@@ -147,10 +147,10 @@ func (m *Manager) install(ctx context.Context, channel string) error {
 	// no-op after a successful swap (the file was renamed away)
 	defer func() { _ = os.Remove(tmpName) }()
 
-	if err := m.downloadFile(ctx, urls.binary, tmpName); err != nil {
-		return fmt.Errorf("download binary: %w", err)
+	if err := m.downloadFile(ctx, urls.Binary, tmpName); err != nil {
+		return fmt.Errorf("download %w", err)
 	}
-	sumsData, err := m.downloadData(ctx, urls.sums)
+	sumsData, err := m.downloadData(ctx, urls.Sums)
 	if err != nil {
 		return fmt.Errorf("download checksums: %w", err)
 	}
@@ -166,7 +166,7 @@ func (m *Manager) install(ctx context.Context, channel string) error {
 		return err
 	}
 	if err := os.Chmod(tmpName, 0o755); err != nil {
-		return fmt.Errorf("chmod new binary: %w", err)
+		return fmt.Errorf("chmod new %w", err)
 	}
 	version, err := m.smokeTest(tmpName)
 	if err != nil {
@@ -190,7 +190,7 @@ func (m *Manager) smokeTest(path string) (string, error) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "--version").Output() //nolint:gosec // G204 - path is the just-downloaded temp file inside the managed bin dir
 	if err != nil {
-		return "", fmt.Errorf("smoke test of new binary: %w", err)
+		return "", fmt.Errorf("smoke test of new %w", err)
 	}
 	version := strings.TrimSpace(string(out))
 	if version == "" {
@@ -221,7 +221,7 @@ func (m *Manager) swap(tmp string) error {
 
 	if m.HasBinary() {
 		if err := os.Rename(bin, prev); err != nil {
-			return fmt.Errorf("park previous binary: %w", err)
+			return fmt.Errorf("park previous %w", err)
 		}
 	}
 	if err := os.Rename(tmp, bin); err != nil {
@@ -230,7 +230,7 @@ func (m *Manager) swap(tmp string) error {
 				log.Printf("[ytdlp] restore previous binary after failed swap: %v", rbErr)
 			}
 		}
-		return fmt.Errorf("swap in new binary: %w", err)
+		return fmt.Errorf("swap in new %w", err)
 	}
 	return nil
 }
@@ -245,11 +245,11 @@ func (m *Manager) Rollback() error {
 	}
 	if m.HasBinary() {
 		if err := os.Remove(bin); err != nil {
-			return fmt.Errorf("remove current binary: %w", err)
+			return fmt.Errorf("remove current %w", err)
 		}
 	}
 	if err := os.Rename(prev, bin); err != nil {
-		return fmt.Errorf("restore previous binary: %w", err)
+		return fmt.Errorf("restore previous %w", err)
 	}
 	log.Printf("[ytdlp] rolled back to the previous binary")
 	return nil
@@ -266,7 +266,7 @@ func (m *Manager) fetchLatestTag(ctx context.Context, channel string) (string, e
 	if !ok {
 		return "", fmt.Errorf("unknown channel %q", channel)
 	}
-	data, err := m.downloadData(ctx, urls.api)
+	data, err := m.downloadData(ctx, urls.API)
 	if err != nil {
 		return "", err
 	}

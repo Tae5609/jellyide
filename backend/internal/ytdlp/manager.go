@@ -97,23 +97,25 @@ type realTicker struct{ *time.Ticker }
 
 func (t *realTicker) Chan() <-chan time.Time { return t.Ticker.C }
 
-// channelURLs are the fixed, https-only sources for one channel.
-type channelURLs struct {
-	binary string
-	sums   string
-	api    string
+// ChannelURLs are the fixed, https-only sources for one channel.
+// ChannelURLs are the fixed, https-only sources for one channel. The type
+// is exported so tests can point a manager at a fake release server.
+type ChannelURLs struct {
+	Binary string
+	Sums   string
+	API    string
 }
 
-var defaultChannels = map[string]channelURLs{
+var defaultChannels = map[string]ChannelURLs{
 	ChannelStable: {
-		binary: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp",
-		sums:   "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
-		api:    "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest",
+		Binary: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp",
+		Sums:   "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS",
+		API:    "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest",
 	},
 	ChannelNightly: {
-		binary: "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp",
-		sums:   "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/SHA2-256SUMS",
-		api:    "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest",
+		Binary: "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp",
+		Sums:   "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/SHA2-256SUMS",
+		API:    "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest",
 	},
 }
 
@@ -125,7 +127,7 @@ type Manager struct {
 	managed bool
 
 	client   *http.Client
-	channels map[string]channelURLs
+	channels map[string]ChannelURLs
 	gate     Gate
 	// idleTimeout bounds how long a swap waits for running downloads.
 	idleTimeout time.Duration
@@ -140,7 +142,7 @@ type Manager struct {
 // false the manager only reports the system binary on PATH and never
 // updates.
 func NewManager(database *db.DB, jm *jobs.Manager, binDir string, managed bool) *Manager {
-	channels := make(map[string]channelURLs, len(defaultChannels))
+	channels := make(map[string]ChannelURLs, len(defaultChannels))
 	for k, v := range defaultChannels {
 		channels[k] = v
 	}
@@ -160,6 +162,13 @@ func NewManager(database *db.DB, jm *jobs.Manager, binDir string, managed bool) 
 // SetGate wires the download queue so a binary swap waits for running
 // downloads.
 func (m *Manager) SetGate(g Gate) { m.gate = g }
+
+// SetTestURLs overrides the release URLs for one channel. It exists so
+// tests can point the manager at a fake release server; production keeps
+// the fixed GitHub allowlist from defaultChannels.
+func (m *Manager) SetTestURLs(channel string, urls ChannelURLs) {
+	m.channels[channel] = urls
+}
 
 // BinPath returns the managed binary path.
 func (m *Manager) BinPath() string { return filepath.Join(m.binDir, binName) }
@@ -266,6 +275,22 @@ func (m *Manager) Status() (Status, error) {
 		s.UpdateAvailable = IsNewer(s.Version, latest)
 	}
 	return s, nil
+}
+
+// Check refreshes the latest known release for the configured channel and
+// records it (plus last_check/last_result); it never installs anything.
+func (m *Manager) Check(ctx context.Context) (string, error) {
+	st, err := m.GetSettings()
+	if err != nil {
+		return "", err
+	}
+	latest, err := m.fetchLatestTag(ctx, st.Channel)
+	if err != nil {
+		m.storeResult("", "error: "+err.Error())
+		return "", err
+	}
+	m.storeResult(latest, "checked "+latest)
+	return latest, nil
 }
 
 // ---------------------------------------------------------------------

@@ -83,11 +83,11 @@ func newTestManager(t *testing.T, srv *httptest.Server) *Manager {
 	t.Cleanup(func() { _ = database.Close() })
 
 	m := NewManager(database, jobs.NewManager(database), filepath.Join(dir, ".jellyide", "bin"), true)
-	m.channels[ChannelStable] = channelURLs{
-		binary: srv.URL + "/download/yt-dlp",
-		sums:   srv.URL + "/download/SHA2-256SUMS",
-		api:    srv.URL + "/api/releases/latest",
-	}
+	m.SetTestURLs(ChannelStable, ChannelURLs{
+		Binary: srv.URL + "/download/yt-dlp",
+		Sums:   srv.URL + "/download/SHA2-256SUMS",
+		API:    srv.URL + "/api/releases/latest",
+	})
 	// The initial requests go to the fixed test URLs; no redirects are
 	// exercised here, so the plain client (no CheckRedirect) is safe.
 	m.client = &http.Client{}
@@ -101,7 +101,7 @@ func seedBinary(t *testing.T, m *Manager, version string) {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
 	if err := os.WriteFile(m.BinPath(), []byte(fakeBinary(version)), 0o755); err != nil {
-		t.Fatalf("write seed binary: %v", err)
+		t.Fatalf("write seed %v", err)
 	}
 }
 
