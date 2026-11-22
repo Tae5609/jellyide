@@ -183,6 +183,13 @@ func (s *Service) SetStatus(id, status string) error {
 	return err
 }
 
+// CountUserSessions returns the number of session rows for userID.
+func (s *Service) CountUserSessions(userID string) (int, error) {
+	var n int
+	err := s.db.Get(&n, `SELECT COUNT(*) FROM sessions WHERE user_id = ?`, userID)
+	return n, err
+}
+
 // DeleteUserSessions removes every session row belonging to userID.
 func (s *Service) DeleteUserSessions(userID string) error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE user_id = ?`, userID)

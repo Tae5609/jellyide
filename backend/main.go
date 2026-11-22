@@ -27,6 +27,12 @@ import (
 const spaBuildDir = "./frontend/build"
 
 func main() {
+	// The admin recovery CLI: `server admin <command>` operates on the
+	// database directly; without arguments the server runs, as before.
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		os.Exit(runAdmin(os.Args[2:], os.Stdin, os.Stdout))
+	}
+
 	// Initialize config
 	downloadDir := getEnv("DOWNLOAD_DIR", "/mnt/media/music")
 	dbPath := filepath.Join(downloadDir, "jellyide.db")
@@ -127,6 +133,11 @@ func main() {
 	// Wrap the whole router with the auth middleware. The SPA is
 	// same-origin, so no CORS handling is needed.
 	handler := authSvc.Middleware(r)
+
+	// In first-run setup mode (no users, no ADMIN_PASSWORD) the gate
+	// 503s the API and media except /api/setup/* and /api/auth/providers.
+	// It opens without a restart once the first user exists.
+	handler = authSvc.SetupGate(handler)
 
 	port := getEnv("PORT", "8080")
 	log.Printf("JellyIDE Server starting on :%s", port)

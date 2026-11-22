@@ -89,18 +89,20 @@ bundles `ffmpeg`, `python3`+`mutagen` and `yt-dlp`.
 ```bash
 git clone https://github.com/Tae5609/jellyide && cd jellyide
 
-# Point the music mount at your library and pick an admin password
+# Point the music mount at your library
 export MUSIC_DIR=/mnt/media/music
-export ADMIN_PASSWORD='change-me-123'
 
 docker compose up -d --build
+docker logs jelly-ide   # shows the one-time setup token
 ```
 
-Open `http://localhost:8080`, sign in as `admin` with that password, start the scan from
-the Library page. The database lives in the music dir as `jellyide.db`, so your collection
+Open `http://localhost:8080/setup`, paste the setup token from the logs, and create your
+admin account. Then start the scan from the Library page. (For unattended installs, set
+`ADMIN_PASSWORD` (and optionally `ADMIN_USERNAME`) before the first start instead; it is
+only used while no users exist and is never re-applied.) The database lives in the music dir as `jellyide.db`, so your collection
 survives a rebuilt container.
 
-The Compose files forward `MUSIC_DIR` and `ADMIN_PASSWORD` (plus the rest of the auth
+The Compose files forward `MUSIC_DIR` and the optional `ADMIN_PASSWORD` (plus the rest of the auth
 variables) to the container — the complete, authoritative env table, the production stack
 and the reverse-proxy recipes are in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
@@ -108,6 +110,23 @@ For the prebuilt-image production stack (`docker-compose.prod.yml`, `.env`, heal
 HTTPS/reverse-proxy, backups, the full env-var table and the OIDC/SAML provider setup) see
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and
 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md).
+
+### Admin recovery
+
+Forgot the admin password or locked every admin out? Use the CLI built into the server
+binary. It works while the server is running:
+
+```bash
+docker exec -it jelly-ide ./server admin reset-password admin             # prompts, no echo
+docker exec -it jelly-ide ./server admin reset-password admin --generate  # prints a random password once
+docker exec -it jelly-ide ./server admin list
+docker exec -it jelly-ide ./server admin create alice --admin
+docker exec -it jelly-ide ./server admin promote|demote|enable|disable <user>
+docker exec -it jelly-ide ./server admin unlock                           # clear login rate limit
+```
+
+A password reset signs that user out everywhere. The last active admin cannot be demoted
+or disabled, and every action is written to the `audit_log` table.
 
 ## Documentation
 

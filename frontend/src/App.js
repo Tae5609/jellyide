@@ -10,6 +10,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Users from './pages/Users';
 import UsersNavLink from './components/UsersNavLink';
+import Setup from './pages/Setup';
 
 const IconDownload = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
 const IconLibrary = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>;
@@ -42,6 +43,10 @@ function Guarded({ children }) {
         <span>Loading…</span>
       </div>
     );
+  }
+  // If setup is required, all protected routes redirect to /setup.
+  if (providers && providers.setup_required) {
+    return <Navigate to="/setup" replace />;
   }
   if (!providers || providers.enabled === false) return children;
   if (!user) {
@@ -200,6 +205,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/register" element={<RegisterRoute />} />
+      <Route path="/setup" element={<Setup />} />
       <Route
         path="/*"
         element={

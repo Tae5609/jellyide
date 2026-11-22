@@ -192,6 +192,14 @@ func migrate(db *sqlx.DB) error {
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_log (
+			id     INTEGER PRIMARY KEY AUTOINCREMENT,
+			at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			actor  TEXT NOT NULL,
+			action TEXT NOT NULL,
+			target TEXT,
+			detail TEXT
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 	}
 

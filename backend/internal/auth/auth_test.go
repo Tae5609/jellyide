@@ -220,6 +220,30 @@ func TestLoginRateLimit(t *testing.T) {
 	}
 }
 
+// The admin CLI's `unlock` command clears the login rate limiter; the
+// limiter is in memory per process, so a restart clears it as well.
+func TestClearLoginRateLimit(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	for i := 0; i < loginFailureLimit; i++ {
+		svc.limiter.record("192.0.2.10")
+	}
+	if !svc.limiter.blocked("192.0.2.10") {
+		t.Fatal("limiter should be blocked after the failure limit")
+	}
+	svc.ClearLoginRateLimit()
+	if svc.limiter.blocked("192.0.2.10") {
+		t.Fatal("limiter should be unblocked after ClearLoginRateLimit")
+	}
+	// A fresh history can reach the limit again.
+	for i := 0; i < loginFailureLimit; i++ {
+		svc.limiter.record("192.0.2.11")
+	}
+	if !svc.limiter.blocked("192.0.2.11") {
+		t.Fatal("limiter should block again after a fresh failure history")
+	}
+}
+
 func TestMiddlewareRequiresSession(t *testing.T) {
 	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
 	h := newTestHandler(svc)
@@ -428,13 +452,18 @@ func TestLogout(t *testing.T) {
 	}
 }
 
-func TestBootstrapRequiresAdminPassword(t *testing.T) {
-	_, err := newTestServiceErr(t, Config{Enabled: true, AdminUsername: testAdmin, AdminPassword: ""})
-	if err == nil {
-		t.Fatal("expected error when ADMIN_PASSWORD is empty and no users exist")
+// With no users and no ADMIN_PASSWORD the service no longer refuses to
+// start: it enters setup mode instead (no admin row is created).
+func TestSetupModeWhenNoUsersAndNoPassword(t *testing.T) {
+	svc, err := newTestServiceErr(t, Config{Enabled: true, AdminUsername: testAdmin, AdminPassword: ""})
+	if err != nil {
+		t.Fatalf("NewService in setup mode: %v", err)
 	}
-	if err.Error() != "no users exist: set ADMIN_PASSWORD to bootstrap the admin account" {
-		t.Fatalf("unexpected bootstrap error: %v", err)
+	if !svc.SetupRequired() {
+		t.Fatal("SetupRequired should be true with no users and no ADMIN_PASSWORD")
+	}
+	if n, err := svc.CountUsers(); err != nil || n != 0 {
+		t.Fatalf("users in setup mode = %d (err %v), want 0", n, err)
 	}
 }
 

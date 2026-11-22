@@ -753,6 +753,94 @@ func TestAdminSettings(t *testing.T) {
 	}
 }
 
+// auditRows returns the audit_log rows for action, oldest first.
+func auditRows(t *testing.T, svc *Service, action string) []struct {
+	Actor  string `db:"actor"`
+	Target string `db:"target"`
+	Detail string `db:"detail"`
+} {
+	t.Helper()
+	var rows []struct {
+		Actor  string `db:"actor"`
+		Target string `db:"target"`
+		Detail string `db:"detail"`
+	}
+	err := svc.db.Select(&rows, `SELECT actor, target, detail FROM audit_log WHERE action = ? ORDER BY id`, action)
+	if err != nil {
+		t.Fatalf("select audit rows: %v", err)
+	}
+	return rows
+}
+
+func TestAdminAPIWritesAuditRows(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+	adminToken := adminSession(t, h, testAdmin, testPassword)
+
+	// Create.
+	rec := doReq(t, h, http.MethodPost, "/api/admin/users",
+		map[string]interface{}{"username": "audited", "password": "password-123", "is_admin": false},
+		sessionHeader(t, adminToken, true))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create user: got %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	if rows := auditRows(t, svc, AuditActionCreateUser); len(rows) != 1 ||
+		rows[0].Actor != testAdmin || rows[0].Target != "audited" {
+		t.Fatalf("create audit rows = %+v", rows)
+	}
+
+	// Patch: demote the new admin and disable it.
+	u, err := svc.GetUserByUsername("audited")
+	if err != nil {
+		t.Fatalf("lookup audited: %v", err)
+	}
+	for _, body := range []interface{}{
+		map[string]interface{}{"is_admin": true},
+		map[string]interface{}{"is_admin": false, "status": UserStatusDisabled},
+	} {
+		rec = doReq(t, h, http.MethodPatch, "/api/admin/users/"+u.ID, body, sessionHeader(t, adminToken, true))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("patch user: got %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	}
+	patches := auditRows(t, svc, AuditActionPatchUser)
+	if len(patches) != 2 || patches[0].Target != "audited" ||
+		patches[0].Detail != "is_admin=true" ||
+		patches[1].Detail != "is_admin=false status=disabled" {
+		t.Fatalf("patch audit rows = %+v", patches)
+	}
+
+	// Password reset.
+	rec = doReq(t, h, http.MethodPost, "/api/admin/users/"+u.ID+"/password",
+		map[string]string{"new_password": "new-password-2"}, sessionHeader(t, adminToken, true))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("reset password: got %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if rows := auditRows(t, svc, AuditActionResetPassword); len(rows) != 1 || rows[0].Target != "audited" {
+		t.Fatalf("reset audit rows = %+v", rows)
+	}
+
+	// Registration mode change.
+	rec = doReq(t, h, http.MethodPut, "/api/admin/settings",
+		map[string]string{"registration_mode": "approval"}, sessionHeader(t, adminToken, true))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("put settings: got %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if rows := auditRows(t, svc, AuditActionRegistrationMode); len(rows) != 1 ||
+		rows[0].Detail != "mode=approval" {
+		t.Fatalf("settings audit rows = %+v", rows)
+	}
+
+	// Delete.
+	rec = doReq(t, h, http.MethodDelete, "/api/admin/users/"+u.ID, nil, sessionHeader(t, adminToken, true))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete user: got %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if rows := auditRows(t, svc, AuditActionDeleteUser); len(rows) != 1 || rows[0].Target != "audited" {
+		t.Fatalf("delete audit rows = %+v", rows)
+	}
+}
+
 func TestRegistrationModeFromEnv(t *testing.T) {
 	for mode, want := range map[string]string{
 		"open":       RegistrationModeOpen,
