@@ -60,7 +60,7 @@ func seedTrack(t *testing.T, lib *library.Service, dir, artist, album, title str
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("mkdir track dir: %v", err)
 	}
-	if err := lib.UpsertTrack(albumID, title, path, 120, 1000); err != nil {
+	if err := lib.UpsertTrack(albumID, title, path, 120, 1000, library.TrackMeta{}); err != nil {
 		t.Fatalf("UpsertTrack: %v", err)
 	}
 	tracks, err := lib.GetTracksByAlbum(albumID)

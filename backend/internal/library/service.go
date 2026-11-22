@@ -30,14 +30,36 @@ type Album struct {
 	Artist   string `json:"artist" db:"artist_name"`
 }
 
-// Track is one row in the tracks table.
+// Track is one row in the tracks table. The tag fields are pointers so a
+// missing (NULL) value is distinguishable from an empty one.
 type Track struct {
-	ID       string `json:"id" db:"id"`
-	AlbumID  string `json:"album_id" db:"album_id"`
-	Title    string `json:"title" db:"title"`
-	Path     string `json:"path" db:"path"`
-	Duration int    `json:"duration" db:"duration"`
-	Bitrate  int    `json:"bitrate" db:"bitrate"`
+	ID          string  `json:"id" db:"id"`
+	AlbumID     string  `json:"album_id" db:"album_id"`
+	Title       string  `json:"title" db:"title"`
+	Path        string  `json:"path" db:"path"`
+	Duration    int     `json:"duration" db:"duration"`
+	Bitrate     int     `json:"bitrate" db:"bitrate"`
+	Artist      *string `json:"artist" db:"artist"`
+	AlbumArtist *string `json:"album_artist" db:"album_artist"`
+	TrackNumber *int    `json:"track_number" db:"track_number"`
+	DiscNumber  *int    `json:"disc_number" db:"disc_number"`
+	Year        *int    `json:"year" db:"year"`
+	Genre       *string `json:"genre" db:"genre"`
+	Composer    *string `json:"composer" db:"composer"`
+	Comment     *string `json:"comment" db:"comment"`
+}
+
+// TrackMeta holds the optional tag columns of a track. A nil field means
+// "not set" (stored as NULL).
+type TrackMeta struct {
+	Artist      *string
+	AlbumArtist *string
+	TrackNumber *int
+	DiscNumber  *int
+	Year        *int
+	Genre       *string
+	Composer    *string
+	Comment     *string
 }
 
 // Service provides the library queries and mutations.
@@ -230,23 +252,31 @@ func (s *Service) SetAlbumCover(albumID string, coverPath string) error {
 	return err
 }
 
-// UpsertTrack inserts or updates (by file path) the track of an album.
-func (s *Service) UpsertTrack(albumID string, title, path string, duration, bitrate int) error {
+// UpsertTrack inserts or updates (by file path) the track of an album,
+// including its optional tag columns.
+func (s *Service) UpsertTrack(albumID string, title, path string, duration, bitrate int, meta TrackMeta) error {
 	var id string
 	err := s.db.Get(&id, "SELECT id FROM tracks WHERE path = ?", path)
 	if err == nil {
 		_, err = s.db.Exec(`
-			UPDATE tracks SET title = ?, album_id = ?, duration = ?, bitrate = ?
+			UPDATE tracks SET title = ?, album_id = ?, duration = ?, bitrate = ?,
+				artist = ?, album_artist = ?, track_number = ?, disc_number = ?,
+				year = ?, genre = ?, composer = ?, comment = ?
 			WHERE id = ?
-		`, title, albumID, duration, bitrate, id)
+		`, title, albumID, duration, bitrate,
+			meta.Artist, meta.AlbumArtist, meta.TrackNumber, meta.DiscNumber,
+			meta.Year, meta.Genre, meta.Composer, meta.Comment, id)
 		return err
 	}
 
 	id = uuid.New().String()
 	_, err = s.db.Exec(`
-		INSERT INTO tracks (id, album_id, title, path, duration, bitrate)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, id, albumID, title, path, duration, bitrate)
+		INSERT INTO tracks (id, album_id, title, path, duration, bitrate,
+			artist, album_artist, track_number, disc_number, year, genre, composer, comment)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, albumID, title, path, duration, bitrate,
+		meta.Artist, meta.AlbumArtist, meta.TrackNumber, meta.DiscNumber,
+		meta.Year, meta.Genre, meta.Composer, meta.Comment)
 	return err
 }
 
