@@ -82,6 +82,7 @@ export default function TrackGrid({
   onToggleCol,
   focus,
   onFocusCell,
+  onGridFocusChange,
   editing,
   onStartEdit,
   onExitEdit,
@@ -105,6 +106,9 @@ export default function TrackGrid({
   const [sheetDrafts, setSheetDrafts] = useState({});
   const anchorRef = useRef(null);
   const colMenuRef = useRef(null);
+  const gridRef = useRef(null);
+  const onGridFocusChangeRef = useRef(onGridFocusChange);
+  onGridFocusChangeRef.current = onGridFocusChange;
 
   const focusKey = focus ? `${focus.row}:${focus.col}` : '';
   const [draft, setDraft] = useState('');
@@ -136,6 +140,18 @@ export default function TrackGrid({
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, [colMenuOpen]);
 
+  // The parent gates Ctrl/⌘+A on the grid actually having focus. Focus
+  // events alone would not cover a pointer press on a non-focusable panel
+  // area, so also listen for pointer presses outside the grid card.
+  useEffect(() => {
+    const onDocPointerDown = (e) => {
+      const el = gridRef.current;
+      if (el && !el.contains(e.target)) onGridFocusChangeRef.current?.(false);
+    };
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, []);
+
   const allSelected = tracks.length > 0 && tracks.every((t) => selected[t.id]);
 
   const handleHeaderSelectAll = (e) => {
@@ -147,6 +163,7 @@ export default function TrackGrid({
   const handleCellClick = (e, row, col) => {
     const track = tracks[row];
     if (!track) return;
+    onGridFocusChange?.(true);
     if (e.shiftKey) {
       const anchor = anchorRef.current || track.id;
       onSelectRange(anchor, track.id);
@@ -160,6 +177,7 @@ export default function TrackGrid({
   const handleCheckbox = (e, trackId) => {
     e.stopPropagation();
     anchorRef.current = trackId;
+    onGridFocusChange?.(true);
     onSelectToggle(trackId);
   };
 
@@ -408,7 +426,15 @@ export default function TrackGrid({
 
   return (
     <div className="metadata-tracks">
-      <div className="card card-flush">
+      <div
+        className="card card-flush"
+        ref={gridRef}
+        onFocus={() => onGridFocusChange?.(true)}
+        onBlur={(e) => {
+          const rt = e.relatedTarget;
+          if (rt && !e.currentTarget.contains(rt)) onGridFocusChange?.(false);
+        }}
+      >
         <div className="md-toolbar">
           <button
             type="button"

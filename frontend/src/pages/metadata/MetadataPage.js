@@ -73,6 +73,10 @@ export default function MetadataPage() {
   const [focus, setFocus] = useState(null); // {row, col}
   const [editing, setEditing] = useState(false);
   const [visibleCols, setVisibleCols] = useState(loadColumns);
+  // True while the pointer/keyboard is inside the grid card. Gates the
+  // Ctrl/⌘+A shortcut ("select all rows when the grid has focus") instead
+  // of the cell-focus state, which would persist after clicking a panel.
+  const [gridFocused, setGridFocused] = useState(false);
 
   // Overlays
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -394,7 +398,7 @@ export default function MetadataPage() {
       onUndo: () => dispatch({ type: 'UNDO' }),
       onRedo: () => dispatch({ type: 'REDO' }),
       onSelectAll: () => {
-        if (focus) dispatch({ type: 'SELECT_ALL' });
+        if (gridFocused) dispatch({ type: 'SELECT_ALL' });
       },
       onFillDown: doFillDown,
       onArrowLeft: () => moveFocus(0, -1),
@@ -543,6 +547,7 @@ export default function MetadataPage() {
           onToggleCol={toggleCol}
           focus={focus}
           onFocusCell={(row, col) => setFocus({ row, col })}
+          onGridFocusChange={setGridFocused}
           editing={editing}
           onStartEdit={() => setEditing(true)}
           onExitEdit={() => setEditing(false)}
