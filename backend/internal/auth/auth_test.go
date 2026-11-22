@@ -4,11 +4,13 @@ package auth
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"yt-scraper/internal/db"
@@ -543,5 +545,84 @@ func TestFindOrCreateExternalUserNameCollision(t *testing.T) {
 			t.Fatalf("duplicate username %q", row.Username)
 		}
 		seen[row.Username] = true
+	}
+}
+
+// Regression: concurrent first logins that all resolve to the same base
+// username must all succeed with distinct names instead of one hitting the
+// UNIQUE constraint and surfacing a 500.
+func TestFindOrCreateExternalUserConcurrent(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	users := make(chan *User, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			u, err := svc.FindOrCreateExternalUser("oidc", fmt.Sprintf("sub-%d", i), "same", "", "", false)
+			if err != nil {
+				errs <- err
+				return
+			}
+			users <- u
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	close(users)
+
+	for err := range errs {
+		t.Fatalf("FindOrCreateExternalUser: %v", err)
+	}
+	seen := map[string]bool{}
+	for u := range users {
+		if seen[u.Username] {
+			t.Fatalf("duplicate username %q", u.Username)
+		}
+		seen[u.Username] = true
+	}
+	if len(seen) != n {
+		t.Fatalf("created %d users, want %d", len(seen), n)
+	}
+}
+
+// Regression: concurrent first logins for the same (provider, subject) must
+// all return the same user, not a UNIQUE violation.
+func TestFindOrCreateExternalUserConcurrentSameSubject(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	users := make(chan *User, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			u, err := svc.FindOrCreateExternalUser("oidc", "same-subject", "same", "", "", false)
+			if err != nil {
+				errs <- err
+				return
+			}
+			users <- u
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(users)
+
+	for err := range errs {
+		t.Fatalf("FindOrCreateExternalUser: %v", err)
+	}
+	var id string
+	for u := range users {
+		if id == "" {
+			id = u.ID
+		} else if u.ID != id {
+			t.Fatalf("same subject returned different users: %q and %q", id, u.ID)
+		}
 	}
 }

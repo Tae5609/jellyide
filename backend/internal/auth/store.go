@@ -309,15 +309,6 @@ func (s *Service) GetUserByProviderSubject(provider, subject string) (*User, err
 // status: the per-login update path (UpdateExternalIdentity) only touches
 // email, display name and the admin flag.
 func (s *Service) FindOrCreateExternalUser(provider, subject, username, email, displayName string, isAdmin bool) (*User, error) {
-	// Check by unique (provider, subject) first.
-	existing, err := s.GetUserByProviderSubject(provider, subject)
-	if err == nil {
-		return existing, nil
-	}
-	if !errors.Is(err, ErrNoUser) {
-		return nil, err
-	}
-
 	name := username
 	if name == "" {
 		name = subject
@@ -325,36 +316,63 @@ func (s *Service) FindOrCreateExternalUser(provider, subject, username, email, d
 	if name == "" {
 		return nil, errors.New("external user needs a username or a subject")
 	}
-	if _, err := s.GetUserByUsername(name); !errors.Is(err, ErrNoUser) {
-		if err != nil {
-			return nil, err
-		}
-		// Username taken: append the provider (then a counter) to the
-		// resolved name until a free unique name is found.
-		var uerr error
-		if name, uerr = s.uniqueExternalName(name, provider); uerr != nil {
-			return nil, uerr
-		}
-	}
 
 	status := UserStatusActive
 	if mode, err := s.GetRegistrationMode(); err == nil && mode == RegistrationModeApproval {
 		status = UserStatusPending
 	}
-	u := &User{
-		ID:          newID(),
-		Username:    name,
-		Provider:    provider,
-		Subject:     &subject,
-		Email:       strPtrOrNil(email),
-		DisplayName: strPtrOrNil(displayName),
-		IsAdmin:     isAdmin,
-		Status:      status,
+
+	// Two concurrent first logins can both pass the lookups below. The
+	// UNIQUE indexes then reject the loser, so retry: a (provider, subject)
+	// collision means another request already created the user, and a
+	// username collision means the next suffix must be chosen.
+	const maxAttempts = 10
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		existing, err := s.GetUserByProviderSubject(provider, subject)
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, ErrNoUser) {
+			return nil, err
+		}
+
+		candidate := name
+		if _, err := s.GetUserByUsername(candidate); !errors.Is(err, ErrNoUser) {
+			if err != nil {
+				return nil, err
+			}
+			// Username taken: append the provider (then a counter) to the
+			// resolved name until a free unique name is found.
+			var uerr error
+			if candidate, uerr = s.uniqueExternalName(candidate, provider); uerr != nil {
+				return nil, uerr
+			}
+		}
+
+		u := &User{
+			ID:          newID(),
+			Username:    candidate,
+			Provider:    provider,
+			Subject:     &subject,
+			Email:       strPtrOrNil(email),
+			DisplayName: strPtrOrNil(displayName),
+			IsAdmin:     isAdmin,
+			Status:      status,
+		}
+		if err := s.CreateUser(u); err != nil {
+			if isUniqueConstraintErr(err) {
+				continue
+			}
+			return nil, err
+		}
+		return u, nil
 	}
-	if err := s.CreateUser(u); err != nil {
-		return nil, err
-	}
-	return u, nil
+	return nil, errors.New("could not allocate a unique external username")
+}
+
+// isUniqueConstraintErr reports whether err is a SQLite UNIQUE violation.
+func isUniqueConstraintErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
 // uniqueExternalName returns a username that is not in use:
