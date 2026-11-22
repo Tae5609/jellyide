@@ -86,13 +86,13 @@ func tableColumns(t *testing.T, file, table string) map[string]bool {
 	if err != nil {
 		t.Fatalf("open raw db: %v", err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 
 	rows, err := raw.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
 		t.Fatalf("pragma table_info: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols := map[string]bool{}
 	for rows.Next() {
@@ -122,7 +122,7 @@ func TestMigrateFreshDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	wantTrack := []string{
 		"id", "album_id", "title", "path", "duration", "bitrate",
@@ -159,7 +159,7 @@ func createOldSchema(t *testing.T, file string) {
 	if err != nil {
 		t.Fatalf("open raw db: %v", err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 
 	old := []string{
 		`CREATE TABLE artists (id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL)`,
@@ -207,13 +207,13 @@ func TestMigrateUpgradesOldSchema(t *testing.T) {
 	if _, err := raw.Exec("INSERT INTO tracks (id, album_id, title, path) VALUES ('t1', 'al1', 'Song', '/x/Song.flac')"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	raw.Close()
+	_ = raw.Close()
 
 	database, err := NewDB(file)
 	if err != nil {
 		t.Fatalf("NewDB over old schema: %v", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	cols := tableColumns(t, file, "tracks")
 	for _, c := range []string{"artist", "album_artist", "track_number", "disc_number", "year", "genre", "composer", "comment"} {
@@ -255,7 +255,7 @@ func TestAddColumnIfMissingDirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	if _, err := database.Exec("CREATE TABLE probe (id TEXT PRIMARY KEY)"); err != nil {
 		t.Fatalf("create probe: %v", err)
