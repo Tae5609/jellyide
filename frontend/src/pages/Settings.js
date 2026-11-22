@@ -9,6 +9,11 @@ export default function Settings() {
   const [limit, setLimit] = useState(2);
   const [proxy, setProxy] = useState('');
   const [saving, setSaving] = useState(false);
+  const [limitError, setLimitError] = useState('');
+  // The last known-good limit: an invalid entry is rejected with the
+  // previous value kept instead of sending NaN/null (the backend would
+  // decode that as 0 and silently stop all concurrent downloads).
+  const [savedLimit, setSavedLimit] = useState(2);
 
   // With auth disabled the anonymous superuser is an admin, like the
   // backend treats it.
@@ -19,19 +24,31 @@ export default function Settings() {
     apiFetch('/config')
       .then(r => r.json())
       .then(data => {
-        setLimit(data.concurrent_limit || 2);
+        const loaded = data.concurrent_limit || 2;
+        setLimit(loaded);
+        setSavedLimit(loaded);
         setProxy(data.proxy || '');
       });
   }, []);
 
   const save = async () => {
+    const parsed = Number(limit);
+    if (limit === '' || !Number.isInteger(parsed) || parsed < 1) {
+      setLimitError('Enter a positive whole number.');
+      setLimit(savedLimit);
+      return;
+    }
+    setLimitError('');
     setSaving(true);
     try {
       const res = await apiFetch('/config', {
         method: 'POST',
-        body: JSON.stringify({ concurrent_limit: parseInt(limit), proxy })
+        body: JSON.stringify({ concurrent_limit: parsed, proxy })
       });
-      if (res.ok) showAlert("Settings Saved", "Your configuration has been updated successfully.");
+      if (res.ok) {
+        setSavedLimit(parsed);
+        showAlert("Settings Saved", "Your configuration has been updated successfully.");
+      }
     } catch (e) {
       showAlert("Error", e.message);
     }
@@ -55,8 +72,16 @@ export default function Settings() {
             type="number" 
             min="1" max="10"
             value={limit} 
-            onChange={e => setLimit(e.target.value)} 
+            onChange={e => {
+              setLimit(e.target.value);
+              setLimitError('');
+            }} 
           />
+          {limitError && (
+            <p className="settings-msg error">
+              {limitError}
+            </p>
+          )}
           <p className="settings-hint">
             Number of simultaneous YouTube downloads.
           </p>
