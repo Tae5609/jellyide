@@ -109,6 +109,40 @@ describe('MetadataPage shortcuts', () => {
     expect(headerBox).not.toBeChecked();
   });
 
+  test('Tab reaches page controls before any grid cell is focused', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('cell-t1-title');
+
+    // No cell focus yet: the shortcut must not swallow Tab, so the native
+    // tab order reaches the first page control (WCAG 2.1.2).
+    await user.tab();
+    expect(screen.getByRole('button', { name: /back/i })).toHaveFocus();
+  });
+
+  test('Tab moves between cells while a grid cell is focused', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('cell-t1-title');
+
+    // Focus the title cell, exit edit mode, keep the cell focus.
+    await user.click(screen.getByTestId('cell-t1-title'));
+    await user.keyboard('{Escape}');
+
+    // A cell is focused: Tab is captured and moves to the next visible
+    // column (artist) instead of moving browser focus out of the grid.
+    await user.keyboard('{Tab}');
+    expect(screen.getByTestId('cell-t1-artist').closest('td')).toHaveClass('focused');
+    // No grid cell editor is open (the side panels have textboxes too).
+    expect(document.querySelector('.md-cell-input')).toBeNull();
+
+    // Arrows share the same cell-focus navigation.
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('cell-t1-album_artist').closest('td')).toHaveClass(
+      'focused'
+    );
+  });
+
   test('text commits are trimmed before becoming pending edits', async () => {
     const user = userEvent.setup();
     renderPage();

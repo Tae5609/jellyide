@@ -71,13 +71,23 @@ describe('useShortcuts', () => {
     expect(handlers[handler]).toHaveBeenCalledTimes(1);
   });
 
-  test('Tab passes the shift flag through', () => {
+  test('Tab is left to the browser while no grid cell is focused', () => {
     const handlers = makeHandlers();
     renderHook(() => useShortcuts(handlers));
+    const ev = press({ key: 'Tab' });
+    expect(handlers.onTab).not.toHaveBeenCalled();
+    // Native tab order to page controls must stay intact (WCAG 2.1.2:
+    // the grid must not trap the keyboard before the user enters it).
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  test('Tab passes the shift flag through while a cell is focused', () => {
+    const handlers = makeHandlers();
+    renderHook(() => useShortcuts(handlers, { cellFocused: true }));
+    expect(press({ key: 'Tab' }).defaultPrevented).toBe(true);
+    expect(handlers.onTab).toHaveBeenCalledWith(false);
     press({ key: 'Tab', shiftKey: true });
     expect(handlers.onTab).toHaveBeenCalledWith(true);
-    press({ key: 'Tab' });
-    expect(handlers.onTab).toHaveBeenCalledWith(false);
   });
 
   test('Ctrl+S and Ctrl+Z prevent the browser default', () => {

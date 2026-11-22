@@ -251,13 +251,17 @@ export default function MetadataPage() {
     });
   };
 
+  // Focus is stored as column keys, but `cols` holds field objects —
+  // navigate by key.
+  const colKeys = cols.map((f) => f.key);
+
   const moveFocus = (dr, dc) => {
     setFocus((prev) => {
       if (!prev || state.tracks.length === 0) return prev;
       const row = Math.max(0, Math.min(state.tracks.length - 1, prev.row + dr));
-      let ci = cols.indexOf(prev.col) + dc;
-      ci = Math.max(0, Math.min(cols.length - 1, ci));
-      return { row, col: cols[ci] };
+      let ci = colKeys.indexOf(prev.col) + dc;
+      ci = Math.max(0, Math.min(colKeys.length - 1, ci));
+      return { row, col: colKeys[ci] };
     });
   };
 
@@ -265,16 +269,16 @@ export default function MetadataPage() {
     setFocus((prev) => {
       if (!prev || state.tracks.length === 0) return prev;
       let row = prev.row;
-      let ci = cols.indexOf(prev.col) + dir;
+      let ci = colKeys.indexOf(prev.col) + dir;
       if (ci < 0) {
-        ci = cols.length - 1;
+        ci = colKeys.length - 1;
         row -= 1;
-      } else if (ci >= cols.length) {
+      } else if (ci >= colKeys.length) {
         ci = 0;
         row += 1;
       }
       if (row < 0 || row >= state.tracks.length) return prev;
-      return { row, col: cols[ci] };
+      return { row, col: colKeys[ci] };
     });
   };
 
@@ -427,6 +431,9 @@ export default function MetadataPage() {
         helpOpen ||
         Boolean(mobilePanel) ||
         modalOpen,
+      // Capture Tab (cell navigation) only while a cell is focused and not
+      // being edited; otherwise native tab order reaches the page controls.
+      cellFocused: Boolean(focus && !editing),
     }
   );
 

@@ -14,9 +14,15 @@ import { useEffect, useRef } from 'react';
 //    typing in an input
 //  - every other shortcut is ignored while an input/textarea/select is
 //    focused (typing)
-export default function useShortcuts(handlers, { disabled = false } = {}) {
-  const ref = useRef({ handlers, disabled });
-  ref.current = { handlers, disabled };
+//  - Tab is intercepted only while a grid cell is focused (the
+//    `cellFocused` option); otherwise native tab order to the page
+//    controls stays intact (WCAG 2.1.2)
+export default function useShortcuts(
+  handlers,
+  { disabled = false, cellFocused = false } = {}
+) {
+  const ref = useRef({ handlers, disabled, cellFocused });
+  ref.current = { handlers, disabled, cellFocused };
 
   useEffect(() => {
     const isDesktop = () =>
@@ -34,7 +40,7 @@ export default function useShortcuts(handlers, { disabled = false } = {}) {
       );
 
     const onKeyDown = (e) => {
-      const { handlers: h, disabled: off } = ref.current;
+      const { handlers: h, disabled: off, cellFocused } = ref.current;
       if (off || !isDesktop()) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key;
@@ -95,6 +101,7 @@ export default function useShortcuts(handlers, { disabled = false } = {}) {
           if (h.onEnter) h.onEnter();
           break;
         case 'Tab':
+          if (!cellFocused) break;
           e.preventDefault();
           if (h.onTab) h.onTab(e.shiftKey);
           break;
