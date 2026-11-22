@@ -229,11 +229,15 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
+	// Validation rejections feed the shared failure limiter too: a flood
+	// of short usernames or passwords must not sail past the lockout.
 	if !usernameRegexp.MatchString(req.Username) {
+		s.limiter.record(ip)
 		writeJSONError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
 	if len(req.Password) < MinPasswordLength {
+		s.limiter.record(ip)
 		writeJSONError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}

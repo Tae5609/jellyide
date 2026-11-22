@@ -239,6 +239,37 @@ func TestRegisterRateLimit(t *testing.T) {
 	}
 }
 
+// Regression: validation rejections (invalid username, short password)
+// feed the shared failure limiter like the 409s do, so a flood of short
+// usernames/passwords cannot sail past the lockout.
+func TestRegisterValidationFailuresRateLimit(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+	if err := svc.SetRegistrationMode(RegistrationModeOpen); err != nil {
+		t.Fatalf("SetRegistrationMode: %v", err)
+	}
+
+	// Five invalid usernames plus five short passwords: 400s, all counted.
+	for i := 0; i < loginFailureLimit/2; i++ {
+		rec := registerUser(t, h, "x", "password-123", "")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("bad username %d: got %d, want 400: %s", i+1, rec.Code, rec.Body.String())
+		}
+		rec = registerUser(t, h, "validname", "short-1", "")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("short password %d: got %d, want 400: %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	// The next attempt is locked out even with a fully valid payload.
+	rec := registerUser(t, h, "fresh-user", "password-123", "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after %d validation failures: got %d, want 429", loginFailureLimit, rec.Code)
+	}
+	if _, err := svc.GetUserByUsername("fresh-user"); !errors.Is(err, ErrNoUser) {
+		t.Fatal("blocked attempt must not create a user")
+	}
+}
+
 func TestLoginStatusGates(t *testing.T) {
 	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
 	h := newTestHandler(svc)
