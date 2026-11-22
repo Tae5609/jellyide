@@ -10,8 +10,8 @@ Product owner: opencode `orchestrator` agent. Update after every state change.
 | 2 | T3 auth frontend | feat/auth-frontend | #9 | MERGED | f10b87f; APPROVE round 2 (round-1 MAJOR: session dropped on password 401 — fixed + tested); 26 frontend tests |
 | 2 | T4 OIDC | feat/auth-oidc | #7 | MERGED | 80cc3dc; APPROVE round 1; includes the mandated FindOrCreateExternalUser collision fix (closes T1-review BUGS entry) |
 | 2 | T5 SAML | feat/auth-saml | #8 | MERGED | a9af9a3; APPROVE round 1 + rebase-conflict re-review (main.go: OIDC+SAML wiring both kept) |
-| 3 | T8 registration + users | feat/users-registration | – | TODO | |
-| 3 | T10 metadata backend | feat/metadata-fields | – | TODO | |
+| 3 | T8 registration + users | feat/users-registration | #12 | MERGED | a346e38; APPROVE round 1 (2 MINORs → BUGS.md, T12 queue); 34 frontend tests |
+| 3 | T10 metadata backend | feat/metadata-fields | #13 | MERGED | 5d9c7ef; APPROVE round 2 (round-1 MAJOR: album edit never updated DB — fixed + tested); rebase conflict with T8 in db.go resolved keep-both, re-reviewed; 30 pytest |
 | 4 | T11 metadata UI + shortcuts | feat/metadata-editor-ui | – | TODO | |
 | 4 | T12 backend hardening | fix/backend-hardening | – | TODO | |
 | 5 | T9 frontend quality | test/frontend-quality | – | TODO | |
@@ -25,6 +25,9 @@ Product owner: opencode `orchestrator` agent. Update after every state change.
 - 2026-11-21 T4's mandated pre-fix (FindOrCreateExternalUser collision suffix) was assigned to T4 rather than a separate task because T4/T5 provisioning depends on it; shipped in PR #7.
 - 2026-11-21 T5 needed a rebase after T4 merged (both touch backend/main.go). Resolved keep-both (OIDC block then SAML block), force-with-lease, conflict resolution re-reviewed and approved before merging #8.
 - 2026-11-22 T3 round-1 MAJOR (apiFetch 401 on /auth/password for wrong current password cleared a valid session) fixed by revalidating via /auth/me before clearing; regression-tested.
+- 2026-11-22 T10 round-1 MAJOR: `album` was an accepted PATCH field but the DB album row was never updated (track stayed bound to the old album). Product decision: fix properly — ensure target album (artist+name), repoint `album_id`, no file rename on album edits, `null` album → 400; regression tests added. Alternative (reject `album`) rejected because T11's UI must allow album edits.
+- 2026-11-22 T10 needed a rebase after T8 merged (both add guarded ALTERs to `migrate()` in db.go). Resolved keep-both (T8 users.status/settings first, then T10 track columns), force-with-lease, resolution re-reviewed (fresh/pre-T8/pre-T10 DB paths all verified idempotent).
+- 2026-11-22 T8 stricter-than-brief decisions accepted by reviewer: last-admin guard also blocks `pending` on the sole active admin; register 403s when `AUTH_LOCAL_ENABLED=false`.
 
 ## Ideas (out of scope, for later)
 - `.track-old` has no `word-break` (T2 reviewer note): a single very long unbroken word could push horizontal scroll at 360px — polish candidate for T9 or a follow-up.
