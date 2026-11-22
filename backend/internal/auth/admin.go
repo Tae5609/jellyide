@@ -142,6 +142,12 @@ func (s *Service) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName: patch.DisplayName,
 	}
 	if err := s.UpdateUser(id, p); err != nil {
+		// Loser of a concurrent last-active-admin race: the pre-check
+		// passed, the in-transaction check did not.
+		if errors.Is(err, ErrLastActiveAdmin) {
+			writeJSONError(w, http.StatusConflict, "cannot demote or disable the last active admin")
+			return
+		}
 		log.Printf("[auth] patch user: %v", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -240,6 +246,12 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.DeleteUser(id); err != nil {
+		// Loser of a concurrent last-active-admin race: the pre-check
+		// passed, the in-transaction check did not.
+		if errors.Is(err, ErrLastActiveAdmin) {
+			writeJSONError(w, http.StatusConflict, "cannot delete the last active admin")
+			return
+		}
 		log.Printf("[auth] delete user: %v", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return

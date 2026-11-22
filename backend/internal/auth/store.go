@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 )
 
 // ErrNoUser is returned when a user lookup matches no row.
@@ -147,7 +148,45 @@ type UserPatch struct {
 	DisplayName *string
 }
 
-// UpdateUser applies a patch to the user with id.
+// ErrLastActiveAdmin is returned when a demotion, deactivation or deletion
+// would leave the instance with zero active admins.
+var ErrLastActiveAdmin = errors.New("the last active admin cannot be demoted, disabled or deleted")
+
+// userAdminState is the (is_admin, status) pair the last-active-admin
+// guard reads inside the write transaction.
+type userAdminState struct {
+	IsAdmin bool   `db:"is_admin"`
+	Status  string `db:"status"`
+}
+
+// checkLastActiveAdminTx must run on the same write transaction that
+// demotes, deactivates or deletes the user: it reports ErrLastActiveAdmin
+// when the user is currently the only active admin. Because every write is
+// serialized on the single write connection, the check-and-mutate pair
+// cannot interleave with another one.
+func checkLastActiveAdminTx(tx *sqlx.Tx, id string) error {
+	var st userAdminState
+	if err := tx.Get(&st, `SELECT is_admin, status FROM users WHERE id = ?`, id); err != nil {
+		return err
+	}
+	if !st.IsAdmin || st.Status != UserStatusActive {
+		return nil
+	}
+	var n int
+	if err := tx.Get(&n, `SELECT COUNT(*) FROM users WHERE is_admin = 1 AND status = 'active'`); err != nil {
+		return err
+	}
+	if n <= 1 {
+		return ErrLastActiveAdmin
+	}
+	return nil
+}
+
+// UpdateUser applies a patch to the user with id. A patch that would demote
+// or deactivate the last active admin is rejected with ErrLastActiveAdmin;
+// the check and the update run in one write transaction so two concurrent
+// patches cannot both pass the count check and leave zero active admins.
+// A missing user is a no-op, as before.
 func (s *Service) UpdateUser(id string, patch UserPatch) error {
 	var sets []string
 	var args []interface{}
@@ -170,9 +209,31 @@ func (s *Service) UpdateUser(id string, patch UserPatch) error {
 	if len(sets) == 0 {
 		return nil
 	}
+	// Only patches that can remove an admin seat need the guarded path.
+	protected := (patch.IsAdmin != nil && !*patch.IsAdmin) ||
+		(patch.Status != nil && *patch.Status != UserStatusActive)
+	if !protected {
+		args = append(args, id)
+		_, err := s.db.Exec(`UPDATE users SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+		return err
+	}
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return err
+	}
+	if err := checkLastActiveAdminTx(tx, id); err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
 	args = append(args, id)
-	_, err := s.db.Exec(`UPDATE users SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
-	return err
+	if _, err := tx.Exec(`UPDATE users SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetStatus changes a user's status. Callers must handle the side effects
@@ -196,13 +257,31 @@ func (s *Service) DeleteUserSessions(userID string) error {
 	return err
 }
 
-// DeleteUser removes a user and their sessions.
+// DeleteUser removes a user and their sessions. Deleting the last active
+// admin is rejected with ErrLastActiveAdmin; the check and the delete run
+// in one write transaction, for the same reason as UpdateUser. A missing
+// user is a no-op, as before.
 func (s *Service) DeleteUser(id string) error {
-	if err := s.DeleteUserSessions(id); err != nil {
+	tx, err := s.db.Beginx()
+	if err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)
-	return err
+	if err := checkLastActiveAdminTx(tx, id); err != nil {
+		_ = tx.Rollback()
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM users WHERE id = ?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // CountActiveAdmins returns how many users are both admins and active. The

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"yt-scraper/internal/db"
@@ -881,5 +882,103 @@ func TestRegistrationModeFromEnv(t *testing.T) {
 				t.Fatalf("mode after re-seed = %q, want %q (DB value must win)", got, want)
 			}
 		})
+	}
+}
+
+// The last-active-admin invariant under a single request: demoting,
+// disabling or deleting the only active admin is rejected with
+// ErrLastActiveAdmin and the user is left untouched.
+func TestUpdateUserRejectsLastActiveAdmin(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	last, err := svc.GetUserByUsername(testAdmin)
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+
+	noAdmin := false
+	if err := svc.UpdateUser(last.ID, UserPatch{IsAdmin: &noAdmin}); !errors.Is(err, ErrLastActiveAdmin) {
+		t.Fatalf("demote last admin err = %v, want ErrLastActiveAdmin", err)
+	}
+	disabled := UserStatusDisabled
+	if err := svc.UpdateUser(last.ID, UserPatch{Status: &disabled}); !errors.Is(err, ErrLastActiveAdmin) {
+		t.Fatalf("disable last admin err = %v, want ErrLastActiveAdmin", err)
+	}
+	still, err := svc.GetUserByID(last.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !still.IsAdmin || still.Status != UserStatusActive {
+		t.Fatalf("last admin state = %+v, want admin+active", still)
+	}
+
+	// A second active admin makes the demotion possible again.
+	if _, err := svc.CreateLocalUser("co-admin", "password-123", "", true); err != nil {
+		t.Fatalf("CreateLocalUser: %v", err)
+	}
+	if err := svc.UpdateUser(last.ID, UserPatch{IsAdmin: &noAdmin}); err != nil {
+		t.Fatalf("demote with a co-admin present: %v", err)
+	}
+}
+
+func TestDeleteUserRejectsLastActiveAdmin(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	last, err := svc.GetUserByUsername(testAdmin)
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if err := svc.DeleteUser(last.ID); !errors.Is(err, ErrLastActiveAdmin) {
+		t.Fatalf("delete last admin err = %v, want ErrLastActiveAdmin", err)
+	}
+	if _, err := svc.GetUserByID(last.ID); err != nil {
+		t.Fatalf("last admin must survive: %v", err)
+	}
+}
+
+// Regression for the check-then-act race: two concurrent patches that
+// each demote/disable the other of the two active admins used to both
+// pass the out-of-transaction count check and leave zero active admins.
+// The in-transaction re-check must reject exactly one of them.
+func TestLastActiveAdminConcurrentDemotion(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	a, err := svc.GetUserByUsername(testAdmin)
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	b, err := svc.CreateLocalUser("second-admin", "password-123", "", true)
+	if err != nil {
+		t.Fatalf("CreateLocalUser: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		disabled := UserStatusDisabled
+		errs <- svc.UpdateUser(b.ID, UserPatch{Status: &disabled})
+	}()
+	go func() {
+		defer wg.Done()
+		noAdmin := false
+		errs <- svc.UpdateUser(a.ID, UserPatch{IsAdmin: &noAdmin})
+	}()
+	wg.Wait()
+	close(errs)
+
+	failed := 0
+	for err := range errs {
+		if err != nil {
+			failed++
+		}
+	}
+	n, err := svc.CountActiveAdmins()
+	if err != nil {
+		t.Fatalf("CountActiveAdmins: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("active admins after concurrent demotion = %d, want >= 1", n)
+	}
+	if failed != 1 {
+		t.Fatalf("rejected patches = %d, want exactly 1", failed)
 	}
 }
