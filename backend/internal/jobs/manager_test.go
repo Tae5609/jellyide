@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -278,6 +279,121 @@ func TestRetryJobIncrementsAttemptsAcrossRetries(t *testing.T) {
 	}
 	if got.Attempts != 2 {
 		t.Fatalf("attempts = %d, want 2", got.Attempts)
+	}
+}
+
+// TestRetryJobConcurrentRaceSingleWinner proves the failed→queued
+// transition is atomic: two goroutines racing RetryJob on one failed job,
+// exactly one wins, the loser gets ErrNotRetryable (or ErrJobNotFound) and
+// attempts is incremented exactly once. A single transition also means a
+// single queue entry downstream — the double enqueue that used to let two
+// yt-dlp processes share one output template is impossible.
+func TestRetryJobConcurrentRaceSingleWinner(t *testing.T) {
+	m := newTestManager(t)
+	job := makeJobWithStatus(t, m, TypeDownload, StatusFailed, "err")
+
+	const racers = 2
+	type outcome struct {
+		job *Job
+		err error
+	}
+	outcomes := make(chan outcome, racers)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			j, err := m.RetryJob(job.ID)
+			outcomes <- outcome{job: j, err: err}
+		}()
+	}
+	wg.Wait()
+	close(outcomes)
+
+	var winners, losers int
+	for o := range outcomes {
+		switch {
+		case o.err == nil:
+			winners++
+		case errors.Is(o.err, ErrNotRetryable) || errors.Is(o.err, ErrJobNotFound):
+			losers++
+		default:
+			t.Fatalf("unexpected RetryJob error: %v", o.err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("winners = %d, want exactly 1", winners)
+	}
+	if losers != racers-1 {
+		t.Fatalf("losers = %d, want %d", losers, racers-1)
+	}
+
+	got, err := m.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != StatusQueued {
+		t.Fatalf("status = %s, want queued", got.Status)
+	}
+	if got.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (incremented exactly once)", got.Attempts)
+	}
+}
+
+// TestRetryFailedDownloadsConcurrentNoDoubleRetry proves two concurrent
+// retry-all passes partition the failed set: the total retried across both
+// calls equals the number of failed jobs, and every job is claimed and
+// incremented exactly once.
+func TestRetryFailedDownloadsConcurrentNoDoubleRetry(t *testing.T) {
+	m := newTestManager(t)
+	const failedCount = 3
+	failed := make([]*Job, 0, failedCount)
+	for i := 0; i < failedCount; i++ {
+		failed = append(failed, makeJobWithStatus(t, m, TypeDownload, StatusFailed, "err"))
+	}
+
+	type outcome struct {
+		jobs []*Job
+		err  error
+	}
+	outcomes := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			js, err := m.RetryFailedDownloads()
+			outcomes <- outcome{jobs: js, err: err}
+		}()
+	}
+	wg.Wait()
+	close(outcomes)
+
+	total := 0
+	claimed := map[string]int{}
+	for o := range outcomes {
+		if o.err != nil {
+			t.Fatalf("RetryFailedDownloads: %v", o.err)
+		}
+		total += len(o.jobs)
+		for _, j := range o.jobs {
+			claimed[j.ID]++
+		}
+	}
+	if total != failedCount {
+		t.Fatalf("total retried = %d, want %d (no double retries)", total, failedCount)
+	}
+	for _, j := range failed {
+		if claimed[j.ID] != 1 {
+			t.Fatalf("job %s retried %d times, want exactly once", j.ID, claimed[j.ID])
+		}
+		got, err := m.GetJob(j.ID)
+		if err != nil {
+			t.Fatalf("GetJob: %v", err)
+		}
+		if got.Attempts != 1 {
+			t.Fatalf("job %s attempts = %d, want 1", j.ID, got.Attempts)
+		}
 	}
 }
 

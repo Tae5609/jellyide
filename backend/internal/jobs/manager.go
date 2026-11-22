@@ -164,22 +164,32 @@ func (m *Manager) GetAllJobs() ([]*Job, error) {
 
 // RetryJob re-queues one failed download job. It is the manual-retry path:
 // the job must exist, be of type download and have status failed. The
-// status resets to queued, progress and error are cleared, details are
-// kept, next_retry_at is cleared and attempts is incremented. It returns
-// the updated job.
+// failed→queued transition is a single conditional UPDATE, so exactly one
+// concurrent caller wins: the loser sees zero affected rows, re-reads the
+// job and reports ErrJobNotFound (row gone) or ErrNotRetryable (row exists
+// but is no longer a failed download, including losing the race). On
+// success the status resets to queued, progress and error are cleared,
+// details are kept, next_retry_at is cleared and attempts is incremented.
+// It returns the updated job.
 func (m *Manager) RetryJob(id string) (*Job, error) {
-	job, err := m.GetJob(id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrJobNotFound
-	}
+	res, err := m.db.Exec(`UPDATE jobs SET status = ?, progress = '', error = '', attempts = attempts + 1, next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND type = ? AND status = ?`,
+		StatusQueued, id, TypeDownload, StatusFailed)
 	if err != nil {
 		return nil, err
 	}
-	if job.Type != TypeDownload || job.Status != StatusFailed {
-		return nil, ErrNotRetryable
-	}
-	if err := m.resetForRetry(id, nil); err != nil {
+	affected, err := res.RowsAffected()
+	if err != nil {
 		return nil, err
+	}
+	if affected == 0 {
+		_, err := m.GetJob(id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrJobNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrNotRetryable
 	}
 	return m.GetJob(id)
 }
@@ -214,15 +224,6 @@ func (m *Manager) RetryFailedDownloads() ([]*Job, error) {
 func (m *Manager) ScheduleRetry(id string, attempts int, nextRetryAt time.Time, errMsg string) error {
 	_, err := m.db.Exec(`UPDATE jobs SET status = ?, progress = '', error = ?, attempts = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		StatusQueued, errMsg, attempts, nextRetryAt, id)
-	return err
-}
-
-// resetForRetry applies the shared retry reset: status queued, cleared
-// progress, next_retry_at set to next (NULL when manual), attempts
-// incremented.
-func (m *Manager) resetForRetry(id string, next *time.Time) error {
-	_, err := m.db.Exec(`UPDATE jobs SET status = ?, progress = '', error = '', attempts = attempts + 1, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		StatusQueued, next, id)
 	return err
 }
 

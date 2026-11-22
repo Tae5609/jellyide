@@ -583,6 +583,64 @@ func TestManualRetryWakesDispatcher(t *testing.T) {
 	}
 }
 
+// TestConcurrentRetriesEnqueueOnce proves two concurrent manual retries of
+// the same failed job enqueue it exactly once: the loser of the atomic
+// failed→queued transition errors out before it can push to the queue, so
+// the dispatcher cannot spawn two yt-dlp processes on the same output
+// template.
+func TestConcurrentRetriesEnqueueOnce(t *testing.T) {
+	d, jm, _, _ := newTestDownloader(t)
+	job := makeFailedDownload(t, jm, "HTTP Error 500")
+
+	type outcome struct {
+		job *jobs.Job
+		err error
+	}
+	outcomes := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			j, err := d.Retry(job.ID)
+			outcomes <- outcome{job: j, err: err}
+		}()
+	}
+	wg.Wait()
+	close(outcomes)
+
+	var winners, losers int
+	for o := range outcomes {
+		switch {
+		case o.err == nil:
+			winners++
+		case errors.Is(o.err, jobs.ErrNotRetryable) || errors.Is(o.err, jobs.ErrJobNotFound):
+			losers++
+		default:
+			t.Fatalf("unexpected Retry error: %v", o.err)
+		}
+	}
+	if winners != 1 || losers != 1 {
+		t.Fatalf("winners/losers = %d/%d, want 1/1", winners, losers)
+	}
+	assertQueuedID(t, d, job.ID)
+
+	// The loser must not have enqueued a second copy.
+	select {
+	case extra := <-d.queue:
+		t.Fatalf("queue holds a second copy of job %s", extra)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	got, err := jm.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (incremented exactly once)", got.Attempts)
+	}
+}
+
 // TestDispatcherSkipsFutureNextRetryAt runs the real dispatcher: a queued
 // job whose next_retry_at is in the future must not be processed before
 // the deadline passes.
