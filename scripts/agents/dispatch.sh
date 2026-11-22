@@ -37,6 +37,15 @@ if ! (cd "$wt" && opencode agent list 2>/dev/null) | grep -q "^$agent (\(all\|pr
   echo "AGENT_NOT_RUNNABLE $agent in $wt. Run scripts/agents/install.sh"; exit 5
 fi
 
+# Planner hold list: task ids (one per line, e.g. T19) that must not be dispatched.
+HOLD="$ROOT/docs/plan/logs/HOLD"
+if [ -f "$HOLD" ]; then
+  task="${name%%-*}"
+  if grep -qx "$task" "$HOLD"; then
+    echo "ON_HOLD $task is held by the planner (see $HOLD and the inbox). Do not dispatch it."; exit 6
+  fi
+fi
+
 cp "$prompt" "$RUN/$name.prompt.md"
 echo "$lane" > "$RUN/$name.lane"
 rm -f "$RUN/$name.done" "$RUN/$name.reported"

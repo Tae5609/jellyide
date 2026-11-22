@@ -58,6 +58,8 @@ Worktrees: `/home/tae5609/jellyide-wt/<branch with / replaced by ->`.
 **State at this handover (planner restarted you to add T19 and the inbox):** your own STATUS.md is accurate, so trust it. Workers still running are detached; collect them with `wait.sh` and reconstruct rounds from `status.sh` and the job logs. T18 is your own brief; keep it in the queue.
 
 ## Planner inbox (check it constantly)
+`wait.sh` prints any unhandled inbox orders under a `!!!!! PLANNER INBOX` banner. When you see it, handle those orders before anything else. `dispatch.sh` answers `ON_HOLD` for tasks the planner has taken over (listed in `docs/plan/logs/HOLD`); never work around it.
+
 Your boss can add instructions without restarting you. **After every `wait.sh` return**, run `cat /home/tae5609/jellyide/docs/plan/logs/INBOX.md 2>/dev/null`.
 - Each item starts with `## <id>`. Act on every item that does not yet have a line `DONE <id>` in `/home/tae5609/jellyide/docs/plan/logs/INBOX.done`.
 - Items can add queue rows (new briefs merged to main: run `git pull` first), change priorities, or tell you to stop or redo something. Inbox items override this file where they conflict.
