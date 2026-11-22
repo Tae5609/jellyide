@@ -159,7 +159,11 @@ export default function CoverArtPanel({
           className="btn-secondary btn-sm"
           onClick={fromLookup}
           disabled={busy !== null || !lookupCoverUrl}
-          title={lookupCoverUrl ? 'Use the cover from the selected MusicBrainz release' : 'Pick a release in the lookup first'}
+          title={
+            lookupCoverUrl
+              ? 'Re-download the cover from the selected MusicBrainz release'
+              : 'Apply a release in the MusicBrainz lookup with "Set cover art from release" checked first'
+          }
         >
           {busy === 'url' ? 'Downloading…' : 'Use from lookup'}
         </button>
