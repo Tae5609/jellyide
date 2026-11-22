@@ -4,6 +4,7 @@ package db
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -327,6 +328,131 @@ func TestMigrateAddsJobsRetryColumns(t *testing.T) {
 		t.Fatalf("second NewDB: %v", err)
 	}
 	_ = again.Close()
+}
+
+// TestDeleteTrackCascadesMetadataChanges is the fresh-database half of the
+// ON DELETE CASCADE fix: deleting a track removes its recorded metadata
+// changes instead of failing the FK constraint (which 500s
+// DELETE /api/library/tracks/{id}).
+func TestDeleteTrackCascadesMetadataChanges(t *testing.T) {
+	database, err := NewDB(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	if _, err := database.Exec("INSERT INTO artists (id, name) VALUES ('a1', 'Artist')"); err != nil {
+		t.Fatalf("seed artist: %v", err)
+	}
+	if _, err := database.Exec("INSERT INTO albums (id, artist_id, title) VALUES ('al1', 'a1', 'Album')"); err != nil {
+		t.Fatalf("seed album: %v", err)
+	}
+	if _, err := database.Exec("INSERT INTO tracks (id, album_id, title, path) VALUES ('t1', 'al1', 'Song', '/x/Song.flac')"); err != nil {
+		t.Fatalf("seed track: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO metadata_changes (id, track_id, field, old_value, new_value)
+		VALUES ('c1', 't1', 'title', 'Old', 'New')`); err != nil {
+		t.Fatalf("seed change: %v", err)
+	}
+
+	if _, err := database.Exec(`DELETE FROM tracks WHERE id = 't1'`); err != nil {
+		t.Fatalf("delete track with recorded changes: %v", err)
+	}
+	var n int
+	if err := database.Get(&n, `SELECT COUNT(*) FROM metadata_changes`); err != nil {
+		t.Fatalf("count changes: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("metadata_changes left after track delete = %d, want 0", n)
+	}
+}
+
+// TestMigrateAddsMetadataChangesCascade is the existing-database half: a
+// pre-T12 database keeps the old metadata_changes definition (no ON DELETE
+// CASCADE), so the guarded migration must rebuild the table with the clause
+// and keep the rows.
+func TestMigrateAddsMetadataChangesCascade(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "legacy.db")
+	createOldSchema(t, file)
+
+	raw, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO artists (id, name) VALUES ('a1', 'Artist')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO albums (id, artist_id, title) VALUES ('al1', 'a1', 'Album')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO tracks (id, album_id, title, path) VALUES ('t1', 'al1', 'Song', '/x/Song.flac')"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := raw.Exec(`INSERT INTO metadata_changes (id, track_id, field, old_value, new_value)
+		VALUES ('c1', 't1', 'title', 'Old', 'New')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_ = raw.Close()
+
+	database, err := NewDB(file)
+	if err != nil {
+		t.Fatalf("NewDB over legacy schema: %v", err)
+	}
+
+	var tableSQL string
+	if err := database.Get(&tableSQL, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'metadata_changes'`); err != nil {
+		t.Fatalf("select table sql: %v", err)
+	}
+	if !strings.Contains(tableSQL, "ON DELETE CASCADE") {
+		t.Fatalf("metadata_changes missing ON DELETE CASCADE after migration: %s", tableSQL)
+	}
+
+	// The row survived the rebuild.
+	var n int
+	if err := database.Get(&n, `SELECT COUNT(*) FROM metadata_changes WHERE id = 'c1'`); err != nil {
+		t.Fatalf("count change: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("metadata_changes rows after migration = %d, want 1", n)
+	}
+
+	// The change-set index survived the table rebuild.
+	var indexCount int
+	if err := database.Get(&indexCount,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_metadata_changes_change_set'"); err != nil {
+		t.Fatalf("query index: %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("change-set index count = %d, want 1", indexCount)
+	}
+
+	// FK enforcement is back on and the track delete now cascades.
+	if _, err := database.Exec(`DELETE FROM tracks WHERE id = 't1'`); err != nil {
+		t.Fatalf("delete track after migration: %v", err)
+	}
+	if err := database.Get(&n, `SELECT COUNT(*) FROM metadata_changes`); err != nil {
+		t.Fatalf("count changes: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("metadata_changes left after track delete = %d, want 0", n)
+	}
+
+	// Idempotent: a second open must not rebuild or fail.
+	if err := database.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	again, err := NewDB(file)
+	if err != nil {
+		t.Fatalf("second NewDB: %v", err)
+	}
+	defer func() { _ = again.Close() }()
+	if err := again.Get(&n, `SELECT COUNT(*) FROM metadata_changes`); err != nil {
+		t.Fatalf("count changes after reopen: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("metadata_changes rows after reopen = %d, want 0", n)
+	}
 }
 
 // TestAddColumnIfMissingDirect drives the helper on a throwaway table.

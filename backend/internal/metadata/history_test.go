@@ -168,9 +168,10 @@ func TestRevertChangeSetMissingTrackConflicts(t *testing.T) {
 	trackID, _ := seedTrack(t, lib, dir, "Song")
 	_, set1 := applyAndWait(t, svc, jm, trackID, map[string]interface{}{"genre": "Rock"})
 
-	// The metadata_changes FK (no ON DELETE clause) blocks the track
-	// delete while its change rows exist; bypass it to simulate a track
-	// that was removed after the change set was applied.
+	// With FK enforcement on, deleting the track would cascade its change
+	// rows. Bypass it to delete only the track row and simulate a track
+	// that was removed after the change set was applied (e.g. by a racing
+	// delete).
 	if _, err := svc.db.Exec("PRAGMA foreign_keys = OFF"); err != nil {
 		t.Fatalf("pragma off: %v", err)
 	}

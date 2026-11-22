@@ -577,6 +577,41 @@ func TestLibraryMutationsMissingResource(t *testing.T) {
 	}
 }
 
+// Regression: a track with recorded metadata changes used to make
+// DELETE /api/library/tracks/{id} fail with an FK constraint violation
+// (500). The ON DELETE CASCADE on metadata_changes.track_id makes the
+// delete succeed and clears the recorded changes.
+func TestDeleteTrackWithMetadataChanges(t *testing.T) {
+	h, _, lib, jm, dir := newTestRouter(t)
+	_, trackID := seedTrack(t, lib, dir, "Artist One", "Album One", "Track 1")
+
+	// Record a change on the track (writes a metadata_changes row).
+	rec := patch(t, h, "/api/metadata/tracks", fmtPatch(t, []map[string]interface{}{
+		{"track_id": trackID, "fields": map[string]interface{}{"genre": "Rock"}},
+	}))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("patch: got %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	var accepted struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	waitForAPIJob(t, jm, accepted.JobID)
+
+	// The delete must not trip the FK constraint.
+	req := httptest.NewRequest(http.MethodDelete, "/api/library/tracks/"+trackID, nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete track with changes: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := lib.GetTrack(trackID); err == nil {
+		t.Fatal("track still exists after delete")
+	}
+}
+
 func TestTriggerScanEmptyDir(t *testing.T) {
 	h, _, _, jm, _ := newTestRouter(t)
 
