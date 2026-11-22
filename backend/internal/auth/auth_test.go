@@ -626,3 +626,110 @@ func TestFindOrCreateExternalUserConcurrentSameSubject(t *testing.T) {
 		}
 	}
 }
+
+// TestClientIP covers the rate-limiter key selection. With TrustProxy on
+// the first X-Forwarded-For hop wins; an unparseable or missing header
+// falls back to the peer. With TrustProxy off (the default) the header is
+// ignored so a client cannot spoof it.
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		trustProxy bool
+		remoteAddr string
+		xff        string
+		want       string
+	}{
+		{"trust proxy: first hop wins", true, "10.0.0.1:40000", "203.0.113.7, 10.0.0.1", "203.0.113.7"},
+		{"trust proxy: single hop", true, "10.0.0.1:40000", "203.0.113.7", "203.0.113.7"},
+		{"trust proxy: padded hop", true, "10.0.0.1:40000", "  203.0.113.9 , 10.0.0.1", "203.0.113.9"},
+		{"trust proxy: ipv6 hop", true, "10.0.0.1:40000", "2001:db8::7, 10.0.0.1", "2001:db8::7"},
+		{"trust proxy: unparseable hop falls back to peer", true, "10.0.0.1:40000", "not-an-ip, 10.0.0.1", "10.0.0.1"},
+		{"trust proxy: missing header falls back to peer", true, "10.0.0.1:40000", "", "10.0.0.1"},
+		{"trust proxy off: header ignored", false, "10.0.0.1:40000", "203.0.113.7", "10.0.0.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newTestService(t, Config{Enabled: true, LocalEnabled: true, TrustProxy: tt.trustProxy})
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.xff != "" {
+				req.Header.Set("X-Forwarded-For", tt.xff)
+			}
+			if got := svc.clientIP(req); got != tt.want {
+				t.Fatalf("clientIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Regression for the shared-bucket lockout: behind a reverse proxy every
+// request shares the proxy's RemoteAddr, so the limiter must key on the
+// first X-Forwarded-For hop when TrustProxy is on. One locked-out client
+// must not lock out the other clients, and with TrustProxy off a client
+// cannot pin another client's bucket by spoofing the header.
+func TestLoginRateLimitTrustProxy(t *testing.T) {
+	const (
+		attackerPeer = "10.0.0.1:40000"
+		otherPeer    = "10.0.0.2:40000"
+		victimPeer   = "198.51.100.9:55555"
+	)
+	badLogin := `{"username":"nobody","password":"wrong-password-1"}`
+
+	post := func(t *testing.T, h http.Handler, peer, xff string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(badLogin))
+		req.RemoteAddr = peer
+		if xff != "" {
+			req.Header.Set("X-Forwarded-For", xff)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("trust proxy keys on first hop", func(t *testing.T) {
+		svc := newTestService(t, Config{Enabled: true, LocalEnabled: true, TrustProxy: true})
+		h := newTestHandler(svc)
+
+		for i := 0; i < loginFailureLimit; i++ {
+			rec := post(t, h, attackerPeer, "203.0.113.7")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: got %d, want 401", i+1, rec.Code)
+			}
+		}
+		// Same XFF hop from a different peer is the same client: blocked.
+		rec := post(t, h, otherPeer, "203.0.113.7")
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("same XFF hop: got %d, want 429", rec.Code)
+		}
+		// A different XFF hop is a different client: not blocked.
+		rec = post(t, h, attackerPeer, "203.0.113.8")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("different XFF hop: got %d, want 401", rec.Code)
+		}
+	})
+
+	t.Run("trust proxy off ignores spoofed header", func(t *testing.T) {
+		svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+		h := newTestHandler(svc)
+
+		// The attacker floods the login with the victim's address in the
+		// header; the limiter must only see the attacker's peer.
+		for i := 0; i < loginFailureLimit; i++ {
+			rec := post(t, h, attackerPeer, "198.51.100.9")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: got %d, want 401", i+1, rec.Code)
+			}
+		}
+		// The attacker's peer is now locked out.
+		rec := post(t, h, attackerPeer, "198.51.100.9")
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("attacker: got %d, want 429", rec.Code)
+		}
+		// The victim's own connection is untouched by the spoofed header.
+		rec = post(t, h, victimPeer, "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("victim: got %d, want 401", rec.Code)
+		}
+	})
+}
