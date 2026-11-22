@@ -43,11 +43,14 @@ function mockFetch(routes) {
 }
 
 function Probe() {
-  const { user, loading } = useAuth();
+  const { user, providers, loading } = useAuth();
   return (
     <div>
       <span data-testid="state">
         {loading ? 'loading' : user ? user.username : 'no-user'}
+      </span>
+      <span data-testid="providers">
+        {providers ? (providers.enabled ? 'on' : 'off') : 'none'}
       </span>
     </div>
   );
@@ -123,6 +126,23 @@ describe('AuthProvider session handling', () => {
     await act(async () => {});
 
     expect(stateText(container)).toBe('no-user');
+    await unmount();
+  });
+
+  test('a failed /auth/providers request falls back to disabled providers, not an endless loader', async () => {
+    global.fetch = mockFetch({
+      '/api/auth/providers': 500,
+      '/api/auth/me': 401,
+    });
+    const { container, unmount } = await renderProvider();
+
+    // Loading finished, providers is the fallback (enabled: false) and
+    // the (absent) session is reported, so the login page renders
+    // instead of spinning forever.
+    expect(stateText(container)).toBe('no-user');
+    expect(
+      container.querySelector('[data-testid="providers"]').textContent
+    ).toBe('off');
     await unmount();
   });
 });

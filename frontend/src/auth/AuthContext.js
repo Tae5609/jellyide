@@ -9,6 +9,25 @@ import { apiFetch } from '../api';
 
 const AuthContext = createContext(null);
 
+// Used when GET /auth/providers cannot be read: treating auth as
+// disabled (rather than leaving providers null) keeps the login page
+// from spinning on its loader forever.
+const FALLBACK_PROVIDERS = {
+  enabled: false,
+  local: false,
+  oidc: { enabled: false, name: '' },
+  saml: { enabled: false, name: '' },
+};
+
+async function readJson(res) {
+  if (!res.ok) return null;
+  try {
+    return await res.json();
+  } catch (err) {
+    return null;
+  }
+}
+
 // AuthProvider loads the auth providers and the current session on mount.
 // State: { user, providers, loading }.
 //
@@ -28,14 +47,15 @@ export function AuthProvider({ children }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [pRes, mRes] = await Promise.all([
-        apiFetch('/auth/providers'),
-        apiFetch('/auth/me'),
+      const [providersData, userData] = await Promise.all([
+        apiFetch('/auth/providers').then(readJson),
+        apiFetch('/auth/me').then(readJson),
       ]);
-      if (pRes.ok) setProviders(await pRes.json());
-      setUser(mRes.ok ? await mRes.json() : null);
+      setProviders(providersData || FALLBACK_PROVIDERS);
+      setUser(userData);
     } catch (err) {
       console.error('Failed to load auth state', err);
+      setProviders(FALLBACK_PROVIDERS);
       setUser(null);
     } finally {
       setLoading(false);
