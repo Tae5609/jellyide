@@ -228,7 +228,7 @@ export default function MetadataPage() {
         showAlert('Invalid value', 'Title must not be empty.');
         return false;
       }
-      value = trimmed === '' ? null : raw;
+      value = trimmed === '' ? null : trimmed;
     }
     dispatch({ type: 'EDIT', trackId, field, value });
     return true;

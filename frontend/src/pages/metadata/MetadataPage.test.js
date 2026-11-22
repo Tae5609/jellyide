@@ -108,4 +108,27 @@ describe('MetadataPage shortcuts', () => {
     expect(box2).toBeChecked();
     expect(headerBox).not.toBeChecked();
   });
+
+  test('text commits are trimmed before becoming pending edits', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('cell-t1-genre');
+
+    await user.click(screen.getByTestId('cell-t1-genre'));
+    // The side panels have textboxes too; the grid's editor is unique.
+    const input = document.querySelector('.md-cell-input');
+    await user.clear(input);
+    // Literal spaces: user-event types them, {Space} tokens are no-ops.
+    await user.type(input, '  Jazz  ');
+    await user.keyboard('{Enter}');
+
+    // The review diff shows the trimmed value, not the padded draft
+    // (textContent: text queries normalise whitespace).
+    const reviewBtn = screen.getAllByRole('button', {
+      name: /Review & apply \(1\)/,
+    })[0];
+    await user.click(reviewBtn);
+    const dialog = screen.getByRole('dialog', { name: 'Review changes' });
+    expect(dialog.querySelector('.review-new').textContent).toBe('Jazz');
+  });
 });
