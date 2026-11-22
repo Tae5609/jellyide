@@ -2,6 +2,13 @@
 
 Branch `docs/project-docs`. Everything else is merged by now. Read `docs/plan/CONVENTIONS.md`, `docs/plan/PLAN.md`, `README.md`, the compose files, `.env.example`, `Dockerfile`, `Makefile`, `.github/workflows/ci.yml`, and skim all backend packages and frontend pages so the docs describe the **real** behaviour. Take env var names and defaults from the code, not from the plan.
 
+## Split for parallel lanes
+This brief runs as **two parallel PRs that own disjoint files**:
+- **T6a** (branch `docs/core-docs`): `README.md`, `docs/ARCHITECTURE.md`, `docs/API.md`, `docs/DEVELOPMENT.md`, `CONTRIBUTING.md`, `docs/METADATA.md`.
+- **T6b** (branch `docs/ops-docs`): `docs/DEPLOYMENT.md`, `docs/AUTHENTICATION.md`, `docs/dev/keycloak/`, `.env.example`, both compose files, `scripts/smoke-auth.sh`, the CI smoke step, and the Makefile `check` hook.
+
+Each part links to the other part's files by their final paths, even before they exist. T11 (metadata UI) and T12 (hardening) may still be in flight: document their behaviour from their briefs, and the later "docs refresh" task reconciles any drift.
+
 ## Do
 1. **Docs set** in `docs/`, clear and well-structured, with a table of contents in each file longer than one screen:
 

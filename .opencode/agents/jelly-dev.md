@@ -1,6 +1,6 @@
 ---
-description: Implements one JellyIDE task brief (or reviewer/CI findings) inside a given git worktree, runs every quality gate, and commits with Conventional Commits.
-mode: subagent
+description: "[Lane A / Orion key A] Implements one JellyIDE task brief (or reviewer/CI findings) inside a given git worktree, runs every quality gate, and commits with Conventional Commits."
+mode: all
 model: orion/Qwen 3.8-27B
 temperature: 0.2
 ---
