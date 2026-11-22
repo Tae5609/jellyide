@@ -23,7 +23,14 @@ func TestIsJunk(t *testing.T) {
 		{"12", true},
 		{"1a", false},
 		{"123", false}, // len >= 3: never junk
-		{"中", false},   // 3 bytes, so len >= 3
+		{"中", false},   // 1 rune (< 3) but a letter: not junk
+		// CJK regression: runes are three bytes each, so the old byte
+		// length never treated them as short. One or two runes without
+		// letters are junk, like their ASCII counterparts.
+		{"，", true},
+		{"，、", true},
+		{"，、。", false}, // 3 runes: never junk
+		{"中口", false},  // two CJK letters: not junk
 	}
 	for _, tt := range tests {
 		if got := isJunk(tt.in); got != tt.want {

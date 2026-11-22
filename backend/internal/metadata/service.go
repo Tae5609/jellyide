@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"yt-scraper/internal/db"
 	"yt-scraper/internal/jobs"
@@ -166,14 +167,16 @@ func findSignificantPatterns(titles []string) []Pattern {
 	return candidates
 }
 
-// isJunk reports whether a candidate substring is noise (too short, or
-// shorter than three characters with no letters at all).
+// isJunk reports whether a candidate substring is noise (empty, or shorter
+// than three runes with no letters at all). The length is counted in runes
+// because findSignificantPatterns slices titles by runes: a single CJK rune
+// is three bytes, so a byte length would let short non-ASCII junk through.
 func isJunk(s string) bool {
 	trimmed := strings.TrimSpace(s)
 	if len(trimmed) == 0 {
 		return true
 	}
-	if len(trimmed) < 3 {
+	if utf8.RuneCountInString(trimmed) < 3 {
 		allJunk := true
 		for _, r := range trimmed {
 			if unicode.IsLetter(r) {
