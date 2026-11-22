@@ -1,9 +1,13 @@
 package jobs
 
 import (
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"yt-scraper/internal/db"
 )
@@ -171,5 +175,260 @@ func TestClearCompleted(t *testing.T) {
 	}
 	if _, err := m.GetJob(running.ID); err != nil {
 		t.Fatalf("running job disappeared: %v", err)
+	}
+}
+
+// makeJobWithStatus creates a job of the given type and moves it to the
+// given status with an error message (when failing).
+func makeJobWithStatus(t *testing.T, m *Manager, jobType JobType, status JobStatus, errMsg string) *Job {
+	t.Helper()
+	job, err := m.CreateJob(jobType, map[string]string{"video_id": "abc"})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if err := m.UpdateJobStatus(job.ID, status, "10%", errMsg); err != nil {
+		t.Fatalf("UpdateJobStatus: %v", err)
+	}
+	return job
+}
+
+func TestRetryJobFailedDownload(t *testing.T) {
+	m := newTestManager(t)
+
+	job := makeJobWithStatus(t, m, TypeDownload, StatusFailed, "HTTP Error 503")
+
+	got, err := m.RetryJob(job.ID)
+	if err != nil {
+		t.Fatalf("RetryJob: %v", err)
+	}
+	if got.Status != StatusQueued {
+		t.Fatalf("status = %s, want queued", got.Status)
+	}
+	if got.Progress != "" {
+		t.Fatalf("progress = %q, want cleared", got.Progress)
+	}
+	if got.Error != "" {
+		t.Fatalf("error = %q, want cleared", got.Error)
+	}
+	if got.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", got.Attempts)
+	}
+	if got.NextRetryAt.Valid {
+		t.Fatalf("next_retry_at = %v, want cleared", got.NextRetryAt.Time)
+	}
+	if !strings.Contains(got.Details, "abc") {
+		t.Fatalf("details = %q, want kept", got.Details)
+	}
+	if got.Type != TypeDownload || got.ID != job.ID {
+		t.Fatalf("job identity changed: %+v", got)
+	}
+}
+
+func TestRetryJobStateRules(t *testing.T) {
+	m := newTestManager(t)
+
+	cases := []struct {
+		name    string
+		jobType JobType
+		status  JobStatus
+	}{
+		{"unknown id", TypeDownload, StatusFailed},
+		{"failed scan", TypeScan, StatusFailed},
+		{"failed metadata", TypeMetadata, StatusFailed},
+		{"queued download", TypeDownload, StatusQueued},
+		{"running download", TypeDownload, StatusRunning},
+		{"completed download", TypeDownload, StatusCompleted},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var id string
+			if tc.name != "unknown id" {
+				id = makeJobWithStatus(t, m, tc.jobType, tc.status, "err").ID
+			} else {
+				id = "no-such-job"
+			}
+			_, err := m.RetryJob(id)
+			var wantErr error
+			if tc.name == "unknown id" {
+				wantErr = ErrJobNotFound
+			} else {
+				wantErr = ErrNotRetryable
+			}
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("RetryJob err = %v, want %v", err, wantErr)
+			}
+		})
+	}
+}
+
+func TestRetryJobIncrementsAttemptsAcrossRetries(t *testing.T) {
+	m := newTestManager(t)
+
+	job := makeJobWithStatus(t, m, TypeDownload, StatusFailed, "err 1")
+	if _, err := m.RetryJob(job.ID); err != nil {
+		t.Fatalf("first retry: %v", err)
+	}
+	// Simulate the retry failing again, then retry manually once more.
+	if err := m.UpdateJobStatus(job.ID, StatusFailed, "", "err 2"); err != nil {
+		t.Fatalf("UpdateJobStatus: %v", err)
+	}
+	got, err := m.RetryJob(job.ID)
+	if err != nil {
+		t.Fatalf("second retry: %v", err)
+	}
+	if got.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", got.Attempts)
+	}
+}
+
+func TestScheduleRetry(t *testing.T) {
+	m := newTestManager(t)
+
+	job := makeJobWithStatus(t, m, TypeDownload, StatusFailed, "err")
+	nextAt := time.Now().Add(30 * time.Second)
+
+	if err := m.ScheduleRetry(job.ID, 1, nextAt, "retrying (1/2): err"); err != nil {
+		t.Fatalf("ScheduleRetry: %v", err)
+	}
+
+	got, err := m.GetJob(job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status != StatusQueued {
+		t.Fatalf("status = %s, want queued", got.Status)
+	}
+	if got.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", got.Attempts)
+	}
+	if got.Error != "retrying (1/2): err" {
+		t.Fatalf("error = %q, want the retrying message", got.Error)
+	}
+	if !got.NextRetryAt.Valid {
+		t.Fatal("next_retry_at not set")
+	}
+	if diff := got.NextRetryAt.Time.Sub(nextAt); diff < -time.Second || diff > time.Second {
+		t.Fatalf("next_retry_at = %v, want ≈ %v", got.NextRetryAt.Time, nextAt)
+	}
+}
+
+func TestRetryFailedDownloads(t *testing.T) {
+	m := newTestManager(t)
+
+	failedDownload := makeJobWithStatus(t, m, TypeDownload, StatusFailed, "a")
+	failedDownload2 := makeJobWithStatus(t, m, TypeDownload, StatusFailed, "b")
+	failedScan := makeJobWithStatus(t, m, TypeScan, StatusFailed, "c")
+	completedDownload := makeJobWithStatus(t, m, TypeDownload, StatusCompleted, "")
+
+	retried, err := m.RetryFailedDownloads()
+	if err != nil {
+		t.Fatalf("RetryFailedDownloads: %v", err)
+	}
+	if len(retried) != 2 {
+		t.Fatalf("retried = %d jobs, want 2", len(retried))
+	}
+	for _, j := range retried {
+		if j.ID != failedDownload.ID && j.ID != failedDownload2.ID {
+			t.Fatalf("unexpected job %s retried", j.ID)
+		}
+		if j.Status != StatusQueued || j.Attempts != 1 {
+			t.Fatalf("job %s = %+v, want queued with one attempt", j.ID, j)
+		}
+	}
+	if scan, err := m.GetJob(failedScan.ID); err == nil && scan.Status == StatusQueued {
+		t.Fatal("failed scan job was retried")
+	}
+	if done, err := m.GetJob(completedDownload.ID); err == nil && done.Status == StatusQueued {
+		t.Fatal("completed download job was retried")
+	}
+
+	// Nothing left to retry.
+	again, err := m.RetryFailedDownloads()
+	if err != nil {
+		t.Fatalf("second RetryFailedDownloads: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("second pass retried %d jobs, want 0", len(again))
+	}
+}
+
+func TestJobJSONRetryFields(t *testing.T) {
+	m := newTestManager(t)
+
+	fresh, err := m.CreateJob(TypeDownload, "x")
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	// attempts defaults to 0, next_retry_at is null.
+	b, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var round struct {
+		Attempts    int    `json:"attempts"`
+		NextRetryAt string `json:"next_retry_at"`
+	}
+	if err := json.Unmarshal(b, &round); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if round.Attempts != 0 {
+		t.Fatalf("attempts = %d, want 0", round.Attempts)
+	}
+
+	// Scheduled retry: next_retry_at serialises as RFC 3339.
+	nextAt := time.Date(2026, 11, 22, 12, 0, 30, 0, time.UTC)
+	if err := m.ScheduleRetry(fresh.ID, 1, nextAt, "retrying (1/2): x"); err != nil {
+		t.Fatalf("ScheduleRetry: %v", err)
+	}
+	got, err := m.GetJob(fresh.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	b, err = json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var withRetry struct {
+		Attempts    int       `json:"attempts"`
+		NextRetryAt time.Time `json:"next_retry_at"`
+	}
+	if err := json.Unmarshal(b, &withRetry); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if withRetry.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", withRetry.Attempts)
+	}
+	if withRetry.NextRetryAt.UTC() != nextAt {
+		t.Fatalf("next_retry_at = %v, want %v", withRetry.NextRetryAt, nextAt)
+	}
+}
+
+// TestNullTimeJSON covers the marshal/unmarshal contract of the nullable
+// time field directly.
+func TestNullTimeJSON(t *testing.T) {
+	var n NullTime
+	if b, err := json.Marshal(n); err != nil || string(b) != "null" {
+		t.Fatalf("Marshal(NullTime{}) = %s, %v; want null", b, err)
+	}
+
+	v := NullTime{NullTime: sql.NullTime{Valid: true, Time: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var back NullTime
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !back.Valid || !back.Time.Equal(v.Time) {
+		t.Fatalf("round trip = %+v, want %v", back, v.Time)
+	}
+
+	var nulled NullTime
+	if err := json.Unmarshal([]byte("null"), &nulled); err != nil {
+		t.Fatalf("Unmarshal(null): %v", err)
+	}
+	if nulled.Valid {
+		t.Fatal("null unmarshal must stay invalid")
 	}
 }

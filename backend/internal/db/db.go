@@ -259,6 +259,19 @@ func migrate(db *sqlx.DB) error {
 		return err
 	}
 
+	// The jobs table predates the automatic-retry columns (T14); like the
+	// users.status column above, pre-existing databases get them via a
+	// guarded ALTER (a fresh database gets them the same way, the CREATE
+	// TABLE intentionally does not carry them).
+	if err := addColumnIfMissing(db, "jobs", "attempts", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		log.Printf("Migration error: %v", err)
+		return err
+	}
+	if err := addColumnIfMissing(db, "jobs", "next_retry_at", "DATETIME"); err != nil {
+		log.Printf("Migration error: %v", err)
+		return err
+	}
+
 	return nil
 }
 

@@ -3,7 +3,9 @@
 package jobs
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"time"
 
@@ -31,17 +33,56 @@ const (
 	TypeMetadata JobType = "metadata"
 )
 
+// NullTime is a database-nullable time.Time. It marshals to an RFC 3339
+// string in JSON (or null when unset).
+type NullTime struct {
+	sql.NullTime
+}
+
+// MarshalJSON implements json.Marshaler.
+func (n NullTime) MarshalJSON() ([]byte, error) {
+	if !n.Valid {
+		return []byte("null"), nil
+	}
+	return json.Marshal(n.Time)
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (n *NullTime) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		n.NullTime = sql.NullTime{}
+		return nil
+	}
+	var t time.Time
+	if err := json.Unmarshal(b, &t); err != nil {
+		return err
+	}
+	n.NullTime = sql.NullTime{Valid: true, Time: t}
+	return nil
+}
+
 // Job is one row in the jobs table.
 type Job struct {
-	ID        string    `json:"id" db:"id"`
-	Type      JobType   `json:"type" db:"type"`
-	Status    JobStatus `json:"status" db:"status"`
-	Details   string    `json:"details" db:"details"`
-	Progress  string    `json:"progress" db:"progress"`
-	Error     string    `json:"error,omitempty" db:"error"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	ID          string    `json:"id" db:"id"`
+	Type        JobType   `json:"type" db:"type"`
+	Status      JobStatus `json:"status" db:"status"`
+	Details     string    `json:"details" db:"details"`
+	Progress    string    `json:"progress" db:"progress"`
+	Error       string    `json:"error,omitempty" db:"error"`
+	Attempts    int       `json:"attempts" db:"attempts"`
+	NextRetryAt NullTime  `json:"next_retry_at" db:"next_retry_at"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
+
+// Errors returned by the retry operations.
+var (
+	// ErrJobNotFound is returned when a job id does not exist.
+	ErrJobNotFound = errors.New("job not found")
+	// ErrNotRetryable is returned when a job exists but is not a failed
+	// download and therefore cannot be retried.
+	ErrNotRetryable = errors.New("job is not a failed download")
+)
 
 // Manager creates and queries jobs.
 type Manager struct {
@@ -108,7 +149,7 @@ func (m *Manager) UpdateJobStatus(id string, status JobStatus, progress string, 
 // GetJob returns the job with the given id (sql.ErrNoRows when missing).
 func (m *Manager) GetJob(id string) (*Job, error) {
 	var job Job
-	query := `SELECT id, type, status, details, COALESCE(progress, '') as progress, COALESCE(error, '') as error, created_at, updated_at FROM jobs WHERE id = ?`
+	query := `SELECT id, type, status, details, COALESCE(progress, '') as progress, COALESCE(error, '') as error, COALESCE(attempts, 0) as attempts, next_retry_at, created_at, updated_at FROM jobs WHERE id = ?`
 	err := m.db.Get(&job, query, id)
 	return &job, err
 }
@@ -116,9 +157,73 @@ func (m *Manager) GetJob(id string) (*Job, error) {
 // GetAllJobs returns all jobs, newest first.
 func (m *Manager) GetAllJobs() ([]*Job, error) {
 	var jobs []*Job
-	query := `SELECT id, type, status, details, COALESCE(progress, '') as progress, COALESCE(error, '') as error, created_at, updated_at FROM jobs ORDER BY created_at DESC`
+	query := `SELECT id, type, status, details, COALESCE(progress, '') as progress, COALESCE(error, '') as error, COALESCE(attempts, 0) as attempts, next_retry_at, created_at, updated_at FROM jobs ORDER BY created_at DESC`
 	err := m.db.Select(&jobs, query)
 	return jobs, err
+}
+
+// RetryJob re-queues one failed download job. It is the manual-retry path:
+// the job must exist, be of type download and have status failed. The
+// status resets to queued, progress and error are cleared, details are
+// kept, next_retry_at is cleared and attempts is incremented. It returns
+// the updated job.
+func (m *Manager) RetryJob(id string) (*Job, error) {
+	job, err := m.GetJob(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrJobNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if job.Type != TypeDownload || job.Status != StatusFailed {
+		return nil, ErrNotRetryable
+	}
+	if err := m.resetForRetry(id, nil); err != nil {
+		return nil, err
+	}
+	return m.GetJob(id)
+}
+
+// RetryFailedDownloads retries every failed download job and returns the
+// jobs that were re-queued. Jobs that changed state in the meantime are
+// skipped, not errors.
+func (m *Manager) RetryFailedDownloads() ([]*Job, error) {
+	var ids []string
+	query := `SELECT id FROM jobs WHERE type = ? AND status = ?`
+	if err := m.db.Select(&ids, query, TypeDownload, StatusFailed); err != nil {
+		return nil, err
+	}
+	var retried []*Job
+	for _, id := range ids {
+		job, err := m.RetryJob(id)
+		if err != nil {
+			if errors.Is(err, ErrJobNotFound) || errors.Is(err, ErrNotRetryable) {
+				continue
+			}
+			return nil, err
+		}
+		retried = append(retried, job)
+	}
+	return retried, nil
+}
+
+// ScheduleRetry arms an automatic retry of a failed download: it sets the
+// given attempts count, moves the job back to queued with cleared progress,
+// stores errMsg (the "retrying (n/max): ..." message) and arms
+// nextRetryAt so the dispatcher defers the run until that instant.
+func (m *Manager) ScheduleRetry(id string, attempts int, nextRetryAt time.Time, errMsg string) error {
+	_, err := m.db.Exec(`UPDATE jobs SET status = ?, progress = '', error = ?, attempts = ?, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		StatusQueued, errMsg, attempts, nextRetryAt, id)
+	return err
+}
+
+// resetForRetry applies the shared retry reset: status queued, cleared
+// progress, next_retry_at set to next (NULL when manual), attempts
+// incremented.
+func (m *Manager) resetForRetry(id string, next *time.Time) error {
+	_, err := m.db.Exec(`UPDATE jobs SET status = ?, progress = '', error = '', attempts = attempts + 1, next_retry_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		StatusQueued, next, id)
+	return err
 }
 
 // ClearCompleted deletes all completed and failed jobs.
