@@ -318,7 +318,8 @@ func (b *samlSessionBridge) CreateSession(w http.ResponseWriter, r *http.Request
 	if err := b.svc.StartSession(w, user.ID); err != nil {
 		return fmt.Errorf("saml: start session: %w", err)
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	// samlsp writes the redirect after CreateSession returns; writing one
+	// here too would trigger a superfluous WriteHeader.
 	return nil
 }
 

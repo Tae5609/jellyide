@@ -306,11 +306,10 @@ func TestSAMLCreateSession(t *testing.T) {
 	if err := bridge.CreateSession(rec, req, testSAMLAssertion()); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	if rec.Code != http.StatusFound {
-		t.Fatalf("CreateSession status = %d, want 302", rec.Code)
-	}
-	if loc := rec.Header().Get("Location"); loc != "/" {
-		t.Fatalf("CreateSession Location = %q, want /", loc)
+	// samlsp writes the redirect itself; the bridge must not write a
+	// second one.
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("CreateSession Location = %q, want no redirect from the bridge", loc)
 	}
 	token := cookieValue(t, rec, SessionCookieName)
 
@@ -400,8 +399,8 @@ func TestSAMPendingInApprovalMode(t *testing.T) {
 	if err := bridge.CreateSession(rec, httptest.NewRequest(http.MethodPost, "/api/auth/saml/acs", nil), testSAMLAssertion()); err != nil {
 		t.Fatalf("CreateSession after approval: %v", err)
 	}
-	if rec.Code != http.StatusFound {
-		t.Fatalf("CreateSession status = %d, want 302", rec.Code)
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("CreateSession Location = %q, want no redirect from the bridge", loc)
 	}
 	if token := cookieValue(t, rec, SessionCookieName); token == "" {
 		t.Fatal("approved SAML login did not set a session cookie")
