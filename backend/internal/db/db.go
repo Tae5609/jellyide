@@ -179,11 +179,31 @@ func migrate(db *sqlx.DB) error {
 			expires_at DATETIME NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 	}
 
 	for _, stmt := range statements {
 		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("Migration error: %v", err)
+			return err
+		}
+	}
+
+	// The users table predates the status column (T8): databases created
+	// before the column existed need the ALTER, fresh ones already have it
+	// via the CREATE TABLE. Guard on PRAGMA table_info so the ALTER runs
+	// at most once.
+	var hasStatus int
+	if err := db.Get(&hasStatus, `SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'status'`); err != nil {
+		log.Printf("Migration error: %v", err)
+		return err
+	}
+	if hasStatus == 0 {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`); err != nil {
 			log.Printf("Migration error: %v", err)
 			return err
 		}
