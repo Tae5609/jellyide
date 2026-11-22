@@ -25,6 +25,17 @@ if [ -e "$RUN/$name.pid" ] && kill -0 "$(cat "$RUN/$name.pid")" 2>/dev/null; the
   echo "ALREADY_RUNNING $name"; exit 4
 fi
 
+# Guard: the agent must resolve to itself inside the worktree. A stale
+# .opencode/agents in an old branch, or a missing global install, makes
+# opencode silently fall back to its default agent on a non-Orion model.
+proj="$wt/.opencode/agents/$agent.md"
+if [ -e "$proj" ] && ! cmp -s "$proj" "$HOME/.config/opencode/agents/$agent.md"; then
+  echo "STALE_AGENTS $proj shadows the global agent with an old version. Rebase the worktree on origin/main first (commit WIP, then git rebase origin/main)."; exit 5
+fi
+if ! (cd "$wt" && opencode agent list 2>/dev/null) | grep -q "^$agent (\(all\|primary\))"; then
+  echo "AGENT_NOT_RUNNABLE $agent in $wt. Run scripts/agents/install.sh"; exit 5
+fi
+
 cp "$prompt" "$RUN/$name.prompt.md"
 echo "$lane" > "$RUN/$name.lane"
 rm -f "$RUN/$name.done" "$RUN/$name.reported"

@@ -32,6 +32,7 @@ Do **not** use the `task` tool, because it blocks you until every task in the ba
 - Wait for results: `scripts/agents/wait.sh 480`, called with a bash timeout of at least 600000 ms. It returns as soon as **any** job finishes, prints that job's final report, and shows the lane usage. `NONE_FINISHED` means call it again.
 - Check state any time: `scripts/agents/status.sh`. A job marked `dead` must be redispatched.
 - **Keep all 5 worker slots busy.** After every `wait.sh` return, immediately: (1) act on the finished job (review it, ship it, or send it back), then (2) fill every free slot with the next ready job from the queue below.
+- **Model guard:** workers MUST run on their Orion agent. `dispatch.sh` refuses with `STALE_AGENTS` (the worktree's old branch carries an outdated `.opencode/agents/<agent>.md`; fix it by committing WIP in the worktree, then `git rebase origin/main`, which deletes that dir) or `AGENT_NOT_RUNNABLE` (run `scripts/agents/install.sh`). If `wait.sh` prints `AGENT_FALLBACK`, the job ran on a non-Orion default model: treat its report as untrusted, and have an Orion dev re-verify its commits before review. Never edit opencode config or agent files yourself. Agent sources live in `scripts/agents/opencode-agents/` and are installed globally.
 - Use `jelly-fast-b` (fast but weaker) only for docs writing, formatting/lint/CI-log fixes, and trivial rebases. Use the 27B agents for features, reviews and security work.
 - Spread work across lanes: a review may run on either lane, regardless of which lane the dev used.
 
@@ -51,10 +52,12 @@ Do **not** use the `task` tool, because it blocks you until every task in the ba
 Already MERGED: T1, T2, T3, T4, T5, T7, T8, T10 (see STATUS.md).
 Worktrees: `/home/tae5609/jellyide-wt/<branch with / replaced by ->`.
 
-**State at this handover:**
-- `feat/metadata-editor-ui` (worktree `/home/tae5609/jellyide-wt/metadata-editor-ui`): T11 dev was interrupted mid-work. Inspect `git status` and `git log`, then dispatch `T11-dev-r1b` telling the dev to continue from the existing work.
-- `fix/backend-hardening` (worktree `/home/tae5609/jellyide-wt/backend-hardening`): the T12 dev reported done. Dispatch the review now.
-- Dispatch T6a and T6b right away in parallel. They own disjoint files (see the T6 brief).
+**State at this handover (planner restarted you):**
+- PRs #1–#17 merged, including T1–T5, T7, T8, T10 and the plan PRs. The T13 brief is in `docs/plan/tasks/`.
+- **T11** (`feat/metadata-editor-ui`): review r1 finished with **VERDICT: CHANGES** (an unreported result in `wait.sh`, read it there). Its dev commits were written by a fallback non-Orion model, so the next dev round (Orion) must fix the findings and re-verify the whole diff.
+- **T12** (`fix/backend-hardening`): every dev run so far fell back to a non-Orion model. The worktree has an outdated `.opencode/agents`. Commit any WIP, rebase on `origin/main`, then dispatch an Orion dev to finish the work and re-verify all existing commits.
+- **T13, T6a, T6b**: Orion workers are still running (detached). Do not redispatch them; wait for their reports.
+- **T14, T15**: new tasks (briefs merged in #17). Start them when their dependencies merge.
 
 ## Per-task loop
 1. **Prepare**: in `/home/tae5609/jellyide`, run `git fetch origin && git checkout main && git pull --ff-only`. Create the worktree if missing: `git worktree add -b <branch> <path> origin/main`.

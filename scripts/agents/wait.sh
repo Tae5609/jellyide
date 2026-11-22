@@ -10,6 +10,9 @@ while :; do
     n=$(basename "$d" .done)
     [ -e "$RUN/$n.reported" ] && continue
     touch "$RUN/$n.reported"; found=1
+    if sed 's/\x1b\[[0-9;]*m//g' "$RUN/$n.log" | grep -qE 'Falling back to default agent|^> build · '; then
+      echo "=== AGENT_FALLBACK $n: ran on the default agent/model, NOT the requested Orion agent. Discard its report, review its commits with extra care, and redispatch. ==="
+    fi
     echo "=== FINISHED $n (exit $(cat "$d")) — report (last 60 lines of $RUN/$n.log) ==="
     sed 's/\x1b\[[0-9;]*m//g' "$RUN/$n.log" | tail -60
   done

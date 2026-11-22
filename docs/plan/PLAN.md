@@ -101,7 +101,7 @@ Routes:
 
 ## Execution: self-orchestrating opencode agents on Orion (`orion/Qwen 3.8-27B`)
 
-Agents are defined in `.opencode/agents/`:
+Agents are defined in `scripts/agents/opencode-agents/` and installed globally with `scripts/agents/install.sh`. They are global so that an old branch's files can never shadow them inside a worktree:
 - `orchestrator` (primary, lane A): the product owner. It schedules tasks by dependency, dispatches background workers, and handles git and GitHub (push, PR, CI, squash-merge). It keeps `docs/plan/STATUS.md` current.
 - Workers: `jelly-dev` / `jelly-reviewer` (lane A, Orion key A, 27B), `jelly-dev-b` / `jelly-reviewer-b` (lane B, Orion key B, 27B), and `jelly-fast-b` (lane B, Flash-Next, for docs and mechanical fixes).
 - Dispatch is non-blocking through `scripts/agents/dispatch.sh`, `wait.sh` and `status.sh`. Each worker is its own `opencode run` process (logs in `docs/plan/logs/jobs/`).
