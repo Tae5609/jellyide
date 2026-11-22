@@ -50,8 +50,9 @@ export function ModalProvider({ children }) {
     });
   };
 
+  // isOpen lets pages pause global keyboard shortcuts while a modal is up.
   return (
-    <ModalContext.Provider value={{ showAlert, showConfirm }}>
+    <ModalContext.Provider value={{ showAlert, showConfirm, isOpen: modal !== null }}>
       {children}
       {modal && (
         <div className="modal-backdrop">

@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { BrowserRouter as Router, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 import Downloads from './pages/Downloads';
 import Library from './pages/Library';
-import Metadata from './pages/Metadata';
+import Metadata from './pages/metadata/MetadataPage';
 import Jobs from './pages/Jobs';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
@@ -93,10 +93,54 @@ function AdminGuard({ children }) {
   return children;
 }
 
+// Global "g then <key>" navigation (downloads / library / jobs / settings).
+// Ignored while typing in a field; the second key must follow within a
+// second.
+function useGlobalGoto() {
+  const navigate = useNavigate();
+  const pendingRef = useRef(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    const isTyping = (t) =>
+      Boolean(
+        t &&
+          (t.tagName === 'INPUT' ||
+            t.tagName === 'TEXTAREA' ||
+            t.tagName === 'SELECT' ||
+            t.isContentEditable)
+      );
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTyping(e.target)) return;
+      const key = e.key.toLowerCase();
+      if (pendingRef.current) {
+        pendingRef.current = false;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        const targets = { d: '/downloads', l: '/library', j: '/jobs', s: '/settings' };
+        if (targets[key]) navigate(targets[key]);
+        return;
+      }
+      if (key === 'g') {
+        pendingRef.current = true;
+        timerRef.current = setTimeout(() => {
+          pendingRef.current = false;
+        }, 1000);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [navigate]);
+}
+
 function Shell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const { user, providers, logout } = useAuth();
+  useGlobalGoto();
 
   const showUser = Boolean(user) && Boolean(providers) && providers.enabled !== false;
 
