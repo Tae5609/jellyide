@@ -76,6 +76,15 @@ func ValidateEdits(edits []TrackEdit) ([]NormalizedEdit, error) {
 				if !isKnownField(name) {
 					return nil, &ValidationError{Message: "unknown field", Field: name, TrackID: e.TrackID}
 				}
+				if name == "album" {
+					// A track must always belong to an album row, so the
+					// field can be moved but not cleared.
+					return nil, &ValidationError{
+						Message: "album cannot be cleared; set a new album name instead",
+						Field:   name,
+						TrackID: e.TrackID,
+					}
+				}
 				normalized.Cleared = append(normalized.Cleared, name)
 			case textFields[name]:
 				text, ok := raw.(string)
@@ -203,8 +212,24 @@ func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, c
 		}
 	}
 
-	// 3. Update the database row. Every edited field except "album" (which
-	// lives on the album row, not the track row) maps to a track column.
+	// 3. Album edits move the track to the target album row: the album
+	// lives in the albums table (keyed by artist + title), so the track is
+	// repointed rather than having a column updated. The file is not
+	// renamed for an album edit (the naming scheme is title-based).
+	if name, ok := edit.Set["album"]; ok {
+		albumID, err := s.ensureTargetAlbum(track, name.(string))
+		if err != nil {
+			log.Printf("metadata: resolve album %q for track %s: %v", name, track.ID, err)
+			return
+		}
+		if _, err := s.db.Exec("UPDATE tracks SET album_id = ? WHERE id = ?", albumID, track.ID); err != nil {
+			log.Printf("metadata: repoint track %s: %v", track.ID, err)
+			return
+		}
+	}
+
+	// 4. Update the database row. Every edited field except "album"
+	// (handled above) maps to a track column.
 	sets := []string{}
 	args := []interface{}{}
 	for name, value := range edit.Set {
@@ -233,13 +258,36 @@ func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, c
 		}
 	}
 
-	// 4. Record one row per changed field under the change set.
+	// 5. Record one row per changed field under the change set.
 	for name, value := range edit.Set {
 		s.recordChange(track, name, value, changeSetID)
 	}
 	for _, name := range edit.Cleared {
 		s.recordChange(track, name, nil, changeSetID)
 	}
+}
+
+// ensureTargetAlbum finds the album with the given title under the
+// track's artist, creating it with the standard artist/album scheme when
+// it does not exist yet, and returns its id. A track without an artist of
+// its own keeps the artist of the album it currently belongs to.
+func (s *Service) ensureTargetAlbum(track *library.Track, albumName string) (string, error) {
+	artistName := ""
+	if track.Artist != nil {
+		artistName = *track.Artist
+	}
+	if strings.TrimSpace(artistName) == "" {
+		album, err := s.lib.GetAlbum(track.AlbumID)
+		if err != nil {
+			return "", err
+		}
+		artistName = album.Artist
+	}
+	artistID, err := s.lib.EnsureArtist(artistName)
+	if err != nil {
+		return "", err
+	}
+	return s.lib.EnsureAlbum(artistID, albumName)
 }
 
 // recordChange inserts one metadata_changes row. old and new are the typed

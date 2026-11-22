@@ -121,6 +121,11 @@ func TestValidateEditsErrors(t *testing.T) {
 			edits: []TrackEdit{{TrackID: "t1", Fields: map[string]interface{}{"title": "   "}}},
 			want:  "title must not be empty",
 		},
+		{
+			name:  "null album",
+			edits: []TrackEdit{{TrackID: "t1", Fields: map[string]interface{}{"album": nil}}},
+			want:  "album cannot be cleared; set a new album name instead",
+		},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -279,6 +284,95 @@ func TestApplyTrackEditsTagFailureLeavesDBUntouched(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("changes = %d, want 0 after tag failure", len(rows))
+	}
+}
+
+func TestApplyAlbumEditRepointsTrack(t *testing.T) {
+	svc, lib, jm, stub, dir := newJobService(t)
+	trackID, _ := seedTrack(t, lib, dir, "Song")
+	track, _ := lib.GetTrack(trackID)
+	oldAlbumID := track.AlbumID
+	if err := os.WriteFile(track.Path, []byte("audio"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	edits := []TrackEdit{{TrackID: trackID, Fields: map[string]interface{}{"album": "Greatest Hits"}}}
+	jobID, changeSetID, err := svc.ApplyTrackEdits(edits)
+	if err != nil {
+		t.Fatalf("ApplyTrackEdits: %v", err)
+	}
+	waitForJob(t, jm, jobID, jobs.StatusCompleted)
+
+	updated, err := lib.GetTrack(trackID)
+	if err != nil {
+		t.Fatalf("GetTrack: %v", err)
+	}
+	// The track is bound to the new album row...
+	if updated.AlbumID == oldAlbumID {
+		t.Fatal("track still bound to the old album")
+	}
+	target, err := lib.GetAlbum(updated.AlbumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if target.Title != "Greatest Hits" || target.Artist != "Artist" {
+		t.Fatalf("target album = %q by %q", target.Title, target.Artist)
+	}
+	// ...created under the track's artist, the old album untouched.
+	var oldTitle string
+	if err := svc.db.Get(&oldTitle, "SELECT title FROM albums WHERE id = ?", oldAlbumID); err != nil {
+		t.Fatalf("old album: %v", err)
+	}
+	if oldTitle != "Album" {
+		t.Fatalf("old album title = %q, want Album", oldTitle)
+	}
+
+	// Album edits do not rename the file.
+	if updated.Path != track.Path {
+		t.Fatalf("path = %q, want %q (no rename for album edits)", updated.Path, track.Path)
+	}
+
+	// The file tag was written and the change row recorded old -> new.
+	if len(stub.writeCalls) != 1 || stub.writeCalls[0].Fields["album"] != "Greatest Hits" {
+		t.Fatalf("writeCalls = %+v", stub.writeCalls)
+	}
+	var rows []changeRow
+	if err := svc.db.Select(&rows, "SELECT id, track_id, field, old_value, new_value, change_set_id FROM metadata_changes WHERE change_set_id = ?", changeSetID); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("changes = %d, want 1", len(rows))
+	}
+	if rows[0].Field != "album" || rows[0].OldValue == nil || *rows[0].OldValue != "Album" || rows[0].NewValue == nil || *rows[0].NewValue != "Greatest Hits" {
+		t.Fatalf("change row = %+v", rows[0])
+	}
+}
+
+func TestApplyAlbumEditReusesExistingAlbum(t *testing.T) {
+	svc, lib, jm, _, dir := newJobService(t)
+	trackID, _ := seedTrack(t, lib, dir, "Song")
+	artistID, _ := lib.EnsureArtist("Artist")
+	existingID, err := lib.EnsureAlbum(artistID, "Known Album")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+
+	jobID, _, err := svc.ApplyTrackEdits([]TrackEdit{{TrackID: trackID, Fields: map[string]interface{}{"album": "Known Album"}}})
+	if err != nil {
+		t.Fatalf("ApplyTrackEdits: %v", err)
+	}
+	waitForJob(t, jm, jobID, jobs.StatusCompleted)
+
+	updated, _ := lib.GetTrack(trackID)
+	if updated.AlbumID != existingID {
+		t.Fatalf("album_id = %s, want the pre-existing album %s", updated.AlbumID, existingID)
+	}
+	var count int
+	if err := svc.db.Get(&count, "SELECT COUNT(*) FROM albums WHERE title = 'Known Album'"); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("albums named 'Known Album' = %d, want 1", count)
 	}
 }
 
