@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useModal } from '../components/ModalContext';
 import { apiFetch } from '../api';
+
+const SCAN_POLL_MS = 2000;
+const SCAN_TERMINAL = ['completed', 'failed'];
 
 export default function Library() {
   const { artistId } = useParams();
@@ -10,9 +13,12 @@ export default function Library() {
   const [artists, setArtists] = useState([]);
   const [albums, setAlbums] = useState([]);
   const [scanning, setScanning] = useState(false);
+  const scanPollRef = useRef(null);
+  const scanBaselineRef = useRef(null);
 
   useEffect(() => {
     fetchArtists();
+    return stopScanWatch;
   }, []);
 
   const fetchArtists = async () => {
@@ -39,19 +45,77 @@ export default function Library() {
     }
   }, [artistId]);
 
+  const stopScanWatch = () => {
+    if (scanPollRef.current) {
+      clearInterval(scanPollRef.current);
+      scanPollRef.current = null;
+    }
+    scanBaselineRef.current = null;
+  };
+
+  const newestScanJob = (scanJobs) =>
+    scanJobs.reduce((a, b) =>
+      new Date(a.created_at) >= new Date(b.created_at) ? a : b
+    );
+
+  // True once the scan started by triggerScan reaches a terminal state.
+  // The baseline (captured right after the scan starts) records the job
+  // statuses at that moment, so older completed scans still sitting in
+  // the jobs table are not mistaken for the new scan finishing. Failed
+  // scans end the watch too: a scan that dies partway may already have
+  // written artists to the library, so they refetch in both cases.
+  const scanSettled = async () => {
+    let jobs;
+    try {
+      const res = await apiFetch('/jobs');
+      jobs = (await res.json()) || [];
+    } catch (e) {
+      return false; // transient network error: keep watching
+    }
+    const scanJobs = jobs.filter(j => j.type === 'scan');
+    if (scanJobs.length === 0) return false;
+    if (scanBaselineRef.current === null) {
+      scanBaselineRef.current = new Map(scanJobs.map(j => [j.id, j.status]));
+      const newest = newestScanJob(scanJobs);
+      return SCAN_TERMINAL.includes(newest.status);
+    }
+    return scanJobs.some(
+      j =>
+        SCAN_TERMINAL.includes(j.status) &&
+        scanBaselineRef.current.get(j.id) !== j.status
+    );
+  };
+
+  const finishScanWatch = () => {
+    stopScanWatch();
+    setScanning(false);
+    fetchArtists();
+  };
+
+  const watchScanCompletion = async () => {
+    stopScanWatch();
+    if (await scanSettled()) {
+      finishScanWatch();
+      return;
+    }
+    scanPollRef.current = setInterval(async () => {
+      if (await scanSettled()) finishScanWatch();
+    }, SCAN_POLL_MS);
+  };
+
   const triggerScan = async () => {
     setScanning(true);
     try {
       const res = await apiFetch('/library/scan', { method: 'POST' });
-      if (res.ok) {
-        showAlert('Library scan started', 'The scan runs in the background. Follow its progress in the Jobs tab.');
-      } else {
-        throw new Error("Failed to start scan");
-      }
+      if (!res.ok) throw new Error("Failed to start scan");
+      showAlert('Library scan started', 'The scan runs in the background. Follow its progress in the Jobs tab.');
+      // Keep the button busy until the scan job reaches a terminal
+      // state, then refetch so newly scanned artists appear.
+      watchScanCompletion();
     } catch (e) {
+      setScanning(false);
       showAlert('Error', e.message);
     }
-    setScanning(false);
   };
 
   return (
