@@ -11,10 +11,48 @@ services:
       - "${PORT:-8080}:8080"
     volumes:
       - ${MUSIC_DIR:-/mnt/media/music}:/mnt/media/music
+      # SAML SP cert/key (SAML_ENABLED=true): defaults to
+      # /mnt/media/music/saml/ inside the music volume above, so they
+      # persist. If you move SAML_SP_CERT / SAML_SP_KEY to another path,
+      # mount that path as a persistent volume as well — a lost key
+      # breaks the IdP's trust of this SP.
     environment:
       - DOWNLOAD_DIR=/mnt/media/music
       - CONCURRENT_DOWNLOAD=${CONCURRENT_DOWNLOAD:-2}
       - PORT=8080
+      # --- auth (see docs/DEPLOYMENT.md for the full table) ---
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - AUTH_LOCAL_ENABLED=${AUTH_LOCAL_ENABLED:-true}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      # Required: ${...:?} makes `docker compose` fail fast when it is
+      # unset, instead of the server dying at first start.
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
+      - REGISTRATION_MODE=${REGISTRATION_MODE:-admin_only}
+      # --- OIDC (optional) ---
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      - OIDC_NAME=${OIDC_NAME:-SSO}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-}
+      - OIDC_ADMIN_GROUP=${OIDC_ADMIN_GROUP:-}
+      - OIDC_GROUPS_CLAIM=${OIDC_GROUPS_CLAIM:-groups}
+      - OIDC_AUTO_CREATE=${OIDC_AUTO_CREATE:-true}
+      # --- SAML (optional) ---
+      - SAML_ENABLED=${SAML_ENABLED:-false}
+      - SAML_NAME=${SAML_NAME:-SAML}
+      - SAML_IDP_METADATA_URL=${SAML_IDP_METADATA_URL:-}
+      - SAML_IDP_METADATA_FILE=${SAML_IDP_METADATA_FILE:-}
+      - SAML_SP_CERT=${SAML_SP_CERT:-}
+      - SAML_SP_KEY=${SAML_SP_KEY:-}
+      - SAML_USERNAME_ATTR=${SAML_USERNAME_ATTR:-}
+      - SAML_EMAIL_ATTR=${SAML_EMAIL_ATTR:-email}
+      - SAML_NAME_ATTR=${SAML_NAME_ATTR:-displayName}
+      - SAML_GROUPS_ATTR=${SAML_GROUPS_ATTR:-groups}
+      - SAML_ADMIN_GROUP=${SAML_ADMIN_GROUP:-}
+      - SAML_AUTO_CREATE=${SAML_AUTO_CREATE:-true}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/info"]
