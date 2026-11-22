@@ -10,17 +10,22 @@ type Config struct {
 	AdminUsername string // username for the bootstrapped admin account
 	AdminPassword string // password for the bootstrapped admin account
 	PublicURL     string // public base URL of this instance
+	// RegistrationMode is the initial registration mode (env REGISTRATION_MODE).
+	// It is written to the settings table once at startup; afterwards the
+	// database value wins.
+	RegistrationMode string
 }
 
 // LoadConfig reads auth settings from the environment.
 func LoadConfig() Config {
 	return Config{
-		Enabled:       envBool("AUTH_ENABLED", true),
-		LocalEnabled:  envBool("AUTH_LOCAL_ENABLED", true),
-		CookieSecure:  envBool("COOKIE_SECURE", false),
-		AdminUsername: envStr("ADMIN_USERNAME", "admin"),
-		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
-		PublicURL:     envStr("PUBLIC_URL", "http://localhost:8080"),
+		Enabled:          envBool("AUTH_ENABLED", true),
+		LocalEnabled:     envBool("AUTH_LOCAL_ENABLED", true),
+		CookieSecure:     envBool("COOKIE_SECURE", false),
+		AdminUsername:    envStr("ADMIN_USERNAME", "admin"),
+		AdminPassword:    os.Getenv("ADMIN_PASSWORD"),
+		PublicURL:        envStr("PUBLIC_URL", "http://localhost:8080"),
+		RegistrationMode: envStr("REGISTRATION_MODE", RegistrationModeAdminOnly),
 	}
 }
 

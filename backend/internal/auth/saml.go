@@ -338,7 +338,7 @@ func (b *samlSessionBridge) updateSAMLProfile(id, email, displayName string, isA
 func samlUserBySubject(s *Service, subject string) (*User, error) {
 	var u User
 	err := s.DB().Get(&u,
-		`SELECT id, username, password_hash, provider, subject, email, display_name, is_admin FROM users WHERE provider = ? AND subject = ?`,
+		`SELECT `+userSelectColumns+` FROM users WHERE provider = ? AND subject = ?`,
 		"saml", subject)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoUser
