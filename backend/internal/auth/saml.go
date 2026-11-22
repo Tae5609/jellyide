@@ -304,6 +304,17 @@ func (b *samlSessionBridge) CreateSession(w http.ResponseWriter, r *http.Request
 		return fmt.Errorf("saml: update user profile: %w", err)
 	}
 
+	// In approval mode a newly auto-created user is pending (see
+	// FindOrCreateExternalUser); in admin_only mode auto-creation only
+	// happens when SAML_AUTO_CREATE is on. Pending and disabled users may
+	// not hold sessions, so the login is refused here.
+	if user.Status != UserStatusActive {
+		if user.Status == UserStatusPending {
+			return errors.New("saml: account pending approval")
+		}
+		return errors.New("saml: account disabled")
+	}
+
 	if err := b.svc.StartSession(w, user.ID); err != nil {
 		return fmt.Errorf("saml: start session: %w", err)
 	}

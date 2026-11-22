@@ -474,6 +474,86 @@ func TestOIDCCustomGroupsClaim(t *testing.T) {
 	}
 }
 
+// In approval mode an OIDC auto-created user starts pending: the callback
+// syncs the identity but refuses the session until an admin approves.
+func TestOIDCPendingInApprovalMode(t *testing.T) {
+	f := newFakeOIDCProvider(t)
+	svc := newOIDCService(t, f, OIDCConfig{AutoCreate: true})
+	if err := svc.SetRegistrationMode(RegistrationModeApproval); err != nil {
+		t.Fatalf("SetRegistrationMode: %v", err)
+	}
+	h := newTestHandler(svc)
+
+	state, nonce, challenge := doOIDCLogin(t, h, f)
+	rec := doOIDCCallback(t, h, f, state, nonce, challenge)
+	assertErrorRedirect(t, rec)
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse callback redirect %q: %v", rec.Header().Get("Location"), err)
+	}
+	if msg := loc.Query().Get("error"); msg != "account pending approval" {
+		t.Fatalf("pending SSO error = %q", msg)
+	}
+
+	// The user exists, is pending, and had its identity synced.
+	u, err := svc.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("lookup alice: %v", err)
+	}
+	if u.Status != UserStatusPending {
+		t.Fatalf("SSO user status = %q, want pending", u.Status)
+	}
+	if u.Email == nil || *u.Email != f.email || u.DisplayName == nil || *u.DisplayName != f.name {
+		t.Fatalf("SSO identity not synced: email=%v name=%v", u.Email, u.DisplayName)
+	}
+
+	// After approval the same user logs in through SSO and the status is
+	// kept (the per-login update path must not reset it to pending).
+	if err := svc.SetStatus(u.ID, UserStatusActive); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	state, nonce, challenge = doOIDCLogin(t, h, f)
+	rec = doOIDCCallback(t, h, f, state, nonce, challenge)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Fatalf("approved callback: got %d %q, want 302 /", rec.Code, rec.Header().Get("Location"))
+	}
+	if token := cookieValue(t, rec, SessionCookieName); token == "" {
+		t.Fatal("approved callback did not set a session cookie")
+	}
+	again, err := svc.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("lookup alice after approval: %v", err)
+	}
+	if again.Status != UserStatusActive {
+		t.Fatalf("status after SSO re-login = %q, want active", again.Status)
+	}
+}
+
+// In admin_only mode SSO auto-creation still happens (OIDC_AUTO_CREATE on)
+// and the user is created active: the registration mode does not gate the
+// provider's env behaviour, it only affects approval.
+func TestOIDCActiveInAdminOnlyMode(t *testing.T) {
+	f := newFakeOIDCProvider(t)
+	svc := newOIDCService(t, f, OIDCConfig{AutoCreate: true})
+	h := newTestHandler(svc)
+
+	state, nonce, challenge := doOIDCLogin(t, h, f)
+	rec := doOIDCCallback(t, h, f, state, nonce, challenge)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Fatalf("callback: got %d %q, want 302 /", rec.Code, rec.Header().Get("Location"))
+	}
+	if token := cookieValue(t, rec, SessionCookieName); token == "" {
+		t.Fatal("callback did not set a session cookie")
+	}
+	u, err := svc.GetUserByUsername("alice")
+	if err != nil {
+		t.Fatalf("lookup alice: %v", err)
+	}
+	if u.Status != UserStatusActive {
+		t.Fatalf("SSO user status in admin_only mode = %q, want active", u.Status)
+	}
+}
+
 func TestLoadOIDCConfig(t *testing.T) {
 	t.Setenv("OIDC_ENABLED", "1")
 	t.Setenv("OIDC_NAME", "Corp SSO")
