@@ -432,9 +432,26 @@ func TestStartManualUpdate(t *testing.T) {
 		t.Fatal("binary missing after a completed manual update")
 	}
 
-	// A second manual update without force is refused: already up to date.
-	if _, err := m.StartManualUpdate(context.Background(), false); !errors.Is(err, ErrUpToDate) {
-		t.Fatalf("second StartManualUpdate = %v, want ErrUpToDate", err)
+	// A second manual update without force is still enqueued (202
+	// semantics): the job completes reporting "up to date" without
+	// touching the binary.
+	job2, err := m.StartManualUpdate(context.Background(), false)
+	if err != nil {
+		t.Fatalf("second StartManualUpdate: %v", err)
+	}
+	waitFor(t, func() bool {
+		j, err := m.jm.GetJob(job2.ID)
+		return err == nil && (j.Status == jobs.StatusCompleted || j.Status == jobs.StatusFailed)
+	}, "the second manual update job to finish")
+	j2, err := m.jm.GetJob(job2.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if j2.Status != jobs.StatusCompleted {
+		t.Fatalf("second job = %s (error: %s), want completed", j2.Status, j2.Error)
+	}
+	if !strings.Contains(j2.Progress, "up to date") {
+		t.Fatalf("second job progress = %q, want the up-to-date result", j2.Progress)
 	}
 
 	// While an update is running, even a forced one is refused.

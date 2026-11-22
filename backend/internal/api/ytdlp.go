@@ -46,10 +46,11 @@ func ytdlpCheck(m *ytdlp.Manager) http.HandlerFunc {
 	}
 }
 
-// ytdlpUpdate: POST /api/admin/ytdlp/update. Starts the update as a
-// ytdlp_update job. 409 while an update is running or when the binary in
-// use already matches the known latest release (send {"force": true} to
-// reinstall anyway).
+// ytdlpUpdate: POST /api/admin/ytdlp/update. Always enqueues the update as
+// a ytdlp_update job and answers 202 {"job_id"}; the job itself reports an
+// "up to date" result when the binary in use already matches the known
+// latest release and force is false (send {"force": true} to reinstall
+// anyway). 409 strictly while an update is already running.
 func ytdlpUpdate(m *ytdlp.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -61,8 +62,6 @@ func ytdlpUpdate(m *ytdlp.Manager) http.HandlerFunc {
 		switch {
 		case errors.Is(err, ytdlp.ErrUpdateRunning):
 			sendJSONError(w, "an update is already running", http.StatusConflict)
-		case errors.Is(err, ytdlp.ErrUpToDate):
-			sendJSONError(w, "already up to date", http.StatusConflict)
 		case err != nil:
 			sendJSONError(w, "internal error", http.StatusInternalServerError)
 		default:

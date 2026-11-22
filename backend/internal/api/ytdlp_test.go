@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -246,8 +247,8 @@ func waitForJobStatus(t *testing.T, jm *jobs.Manager, id string) *jobs.Job {
 }
 
 // TestYtDlpAdminEndpoints covers the happy paths as an admin: the status
-// shape, the check, the update job flow (202, 409 up to date, force),
-// the rollback and the settings validation.
+// shape, the check, the update job flow (202 with a job, even when up to
+// date), the rollback and the settings validation.
 func TestYtDlpAdminEndpoints(t *testing.T) {
 	fr := &fakeRelease{tag: "2025.1.15", script: fakeScript("2025.1.15"), sums: sumsForScript(fakeScript("2025.1.15"))}
 	h, _, yt, jm := newAuthedRouter(t, fr)
@@ -334,10 +335,31 @@ func TestYtDlpAdminEndpoints(t *testing.T) {
 		t.Fatalf("version after second update = %q, want 2025.2.2", yt.Version())
 	}
 
-	// A third non-forced update is refused: already up to date.
+	// A third non-forced update is still enqueued (202); the job
+	// completes reporting "up to date" without touching the binary.
 	rec = apiReq(t, h, http.MethodPost, "/api/admin/ytdlp/update", admin, nil)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("update when up to date: got %d, want 409: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("update when up to date: got %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &upd); err != nil || upd["job_id"] == "" {
+		t.Fatalf("up-to-date update body = %q, want a job_id", rec.Body.String())
+	}
+	job = waitForJobStatus(t, jm, upd["job_id"])
+	if job.Status != jobs.StatusCompleted {
+		t.Fatalf("up-to-date update job = %s (error: %s), want completed", job.Status, job.Error)
+	}
+	if !strings.Contains(job.Progress, "up to date") {
+		t.Fatalf("up-to-date update job progress = %q, want the up-to-date result", job.Progress)
+	}
+	if yt.Version() != "2025.2.2" {
+		t.Fatalf("version after an up-to-date update = %q, want 2025.2.2", yt.Version())
+	}
+	rec = apiReq(t, h, http.MethodGet, "/api/admin/ytdlp", admin, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("decode status after up-to-date update: %v", err)
+	}
+	if st["last_result"] != "up to date (2025.2.2)" {
+		t.Fatalf("last_result = %v, want the up-to-date result", st["last_result"])
 	}
 
 	// Rollback restores the previous binary, then 409s.

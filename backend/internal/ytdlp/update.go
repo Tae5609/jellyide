@@ -25,17 +25,6 @@ var (
 	ErrNoRollback = errors.New("no previous binary to roll back to")
 )
 
-// updateAvailable reports whether the stored latest release is newer than
-// the binary in use. With no stored latest version it returns true, so a
-// manual update is still possible (the check re-runs during the update).
-func (m *Manager) updateAvailable() bool {
-	latest, err := m.getSetting(keyLatestVersion)
-	if err != nil || latest == "" {
-		return true
-	}
-	return IsNewer(m.Version(), latest)
-}
-
 // UpdateOnce performs one full check-and-install cycle:
 //
 //  1. query the channel's releases/latest endpoint for the tag,
@@ -75,9 +64,11 @@ func (m *Manager) UpdateOnce(ctx context.Context, force bool) (string, error) {
 }
 
 // StartManualUpdate creates a ytdlp_update job and runs the update in the
-// background, reporting progress on the job. It returns ErrUpdateRunning
-// when an update is in flight and ErrUpToDate when force is false and the
-// binary in use already matches the known latest release.
+// background. It always enqueues the job (the API answers 202) and only
+// returns ErrUpdateRunning when an update is already in flight; when the
+// binary in use is already the known latest release and force is false,
+// the job simply completes with an "up to date" result instead of
+// downloading.
 func (m *Manager) StartManualUpdate(ctx context.Context, force bool) (*jobs.Job, error) {
 	if !m.beginUpdate() {
 		return nil, ErrUpdateRunning
@@ -86,10 +77,6 @@ func (m *Manager) StartManualUpdate(ctx context.Context, force bool) (*jobs.Job,
 	if err != nil {
 		m.endUpdate()
 		return nil, err
-	}
-	if !force && !m.updateAvailable() {
-		m.endUpdate()
-		return nil, ErrUpToDate
 	}
 	job, err := m.jm.CreateJob(jobs.TypeYTDLPUpdate, map[string]string{
 		"channel": st.Channel,
@@ -107,7 +94,9 @@ func (m *Manager) StartManualUpdate(ctx context.Context, force bool) (*jobs.Job,
 		res, err := m.UpdateOnce(bg, force)
 		switch {
 		case err == nil || errors.Is(err, ErrUpToDate):
-			m.setJob(job.ID, jobs.StatusCompleted, "100%", "")
+			// The job's progress carries the human-readable result
+			// ("updated to X" or "up to date: X") on the Jobs page.
+			m.setJob(job.ID, jobs.StatusCompleted, res, "")
 			log.Printf("[ytdlp] manual update: %s", res)
 		default:
 			m.setJob(job.ID, jobs.StatusFailed, "", err.Error())
