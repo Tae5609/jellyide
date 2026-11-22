@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-
-const API = window.location.origin + '/api';
+import { apiFetch } from '../api';
 
 export default function Library() {
   const { artistId } = useParams();
@@ -16,7 +15,7 @@ export default function Library() {
 
   const fetchArtists = async () => {
     try {
-      const res = await fetch(`${API}/library/artists`);
+      const res = await apiFetch('/library/artists');
       const data = await res.json();
       const list = data || [];
       setArtists(list);
@@ -31,7 +30,7 @@ export default function Library() {
 
   useEffect(() => {
     if (artistId) {
-      fetch(`${API}/library/artists/${artistId}/albums`)
+      apiFetch(`/library/artists/${artistId}/albums`)
         .then(r => r.json())
         .then(data => setAlbums(data || []))
         .catch(err => console.error("Error loading albums", err));
@@ -41,7 +40,7 @@ export default function Library() {
   const triggerScan = async () => {
     setScanning(true);
     try {
-      const res = await fetch(`${API}/library/scan`, { method: 'POST' });
+      const res = await apiFetch('/library/scan', { method: 'POST' });
       if (res.ok) {
         alert('Library scan started!');
       } else {

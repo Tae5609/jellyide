@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-
-const API = window.location.origin + '/api';
+import { apiFetch } from '../api';
 
 const TrashIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -41,16 +40,16 @@ export default function Metadata() {
 
   const refreshData = async () => {
     try {
-      const aRes = await fetch(`${API}/library/albums/${albumId}`);
+      const aRes = await apiFetch(`/library/albums/${albumId}`);
       const aData = await aRes.json();
       setAlbum(aData);
       setNewAlbumTitle(aData.title);
 
-      const tRes = await fetch(`${API}/library/albums/${albumId}/tracks`);
+      const tRes = await apiFetch(`/library/albums/${albumId}/tracks`);
       const tData = await tRes.json();
       setTracks(tData || []);
 
-      const anRes = await fetch(`${API}/metadata/analyze/${albumId}`);
+      const anRes = await apiFetch(`/metadata/analyze/${albumId}`);
       const anData = await anRes.json();
       setAnalysis(anData);
       
@@ -62,9 +61,8 @@ export default function Metadata() {
 
   const handleRenameAlbum = async () => {
     try {
-      const res = await fetch(`${API}/library/albums/${albumId}/rename`, {
+      const res = await apiFetch(`/library/albums/${albumId}/rename`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newAlbumTitle })
       });
       if (res.ok) {
@@ -81,7 +79,7 @@ export default function Metadata() {
       return;
     }
     try {
-      const res = await fetch(`${API}/library/albums/${albumId}`, {
+      const res = await apiFetch(`/library/albums/${albumId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -97,7 +95,7 @@ export default function Metadata() {
       return;
     }
     try {
-      const res = await fetch(`${API}/library/tracks/${trackId}`, {
+      const res = await apiFetch(`/library/tracks/${trackId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -168,9 +166,8 @@ export default function Metadata() {
 
     setApplying(true);
     try {
-      const res = await fetch(`${API}/metadata/apply`, {
+      const res = await apiFetch('/metadata/apply', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(previewList)
       });
       if (!res.ok) throw new Error('Failed to apply changes');

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './auth/AuthContext';
 import Downloads from './pages/Downloads';
 import Library from './pages/Library';
 import Metadata from './pages/Metadata';
 import Jobs from './pages/Jobs';
 import Settings from './pages/Settings';
+import Login from './pages/Login';
 
 const IconDownload = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
 const IconLibrary = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>;
@@ -21,9 +23,42 @@ const getPageTitle = (pathname) => {
   return 'JellyIDE';
 };
 
+// Guard for protected pages: shows a loader while the session is being
+// loaded, skips the check entirely when auth is disabled, and redirects
+// to /login (remembering where the user was going) when there is no
+// session.
+function Guarded({ children }) {
+  const { user, providers, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="auth-loader">
+        <span className="spinner" aria-hidden="true" />
+        <span>Loading…</span>
+      </div>
+    );
+  }
+  if (!providers || providers.enabled === false) return children;
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  }
+  return children;
+}
+
+// Public login route: already-logged-in users go straight to Downloads.
+function LoginRoute() {
+  const { user, loading } = useAuth();
+  if (!loading && user) return <Navigate to="/downloads" replace />;
+  return <Login />;
+}
+
 function Shell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
+  const { user, providers, logout } = useAuth();
+
+  const showUser = Boolean(user) && Boolean(providers) && providers.enabled !== false;
 
   // Close the drawer on navigation
   useEffect(() => {
@@ -76,6 +111,21 @@ function Shell() {
 
         <div className="sidebar-footer">
           <hr className="sidebar-divider" />
+          {showUser && (
+            <div className="sidebar-user">
+              <div className="sidebar-user-name" title={user.username}>
+                {user.display_name || user.username}
+              </div>
+              <button
+                type="button"
+                className="btn-secondary sidebar-logout"
+                title="Logout"
+                onClick={() => logout()}
+              >
+                Logout
+              </button>
+            </div>
+          )}
           <NavLink to="/settings" title="Settings" onClick={() => setDrawerOpen(false)} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             <IconSettings /> <span className="nav-label">Settings</span>
           </NavLink>
@@ -101,10 +151,28 @@ function Shell() {
   );
 }
 
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginRoute />} />
+      <Route
+        path="/*"
+        element={
+          <Guarded>
+            <Shell />
+          </Guarded>
+        }
+      />
+    </Routes>
+  );
+}
+
 function App() {
   return (
     <Router>
-      <Shell />
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
     </Router>
   );
 }

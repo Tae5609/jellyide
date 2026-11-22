@@ -792,6 +792,190 @@ input:focus, select:focus, textarea:focus {
   margin-top: 8px;
 }
 
+.settings-card-title {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+}
+
+.settings-msg {
+  font-size: 14px;
+  margin: 0 0 16px 0;
+}
+
+.settings-msg.success {
+  color: var(--success);
+}
+
+.settings-msg.error {
+  color: var(--danger);
+}
+
+/* Auth */
+.login-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background-color: var(--bg-main);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 32px 24px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+.login-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #fff;
+  margin-bottom: 24px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.login-field .settings-label {
+  margin-bottom: 8px;
+}
+
+/* 16px inputs stay readable and avoid iOS focus zoom */
+.login-input {
+  font-size: 16px;
+}
+
+.login-submit {
+  width: 100%;
+  font-size: 16px;
+}
+
+.login-submit .spinner {
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+}
+
+.login-sso {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background-color: var(--border);
+}
+
+.sso-btn {
+  width: 100%;
+  color: var(--text-main);
+  text-decoration: none;
+}
+
+.sso-btn:hover {
+  text-decoration: none;
+}
+
+.login-error {
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.login-hint {
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+  margin: 8px 0 0 0;
+}
+
+.auth-loader {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-light);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sidebar-user {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.sidebar-user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-logout {
+  width: 100%;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
 /* Tables */
 table {
   width: 100%;
@@ -1003,6 +1187,21 @@ tr:hover td {
 
   .nav-label {
     display: none;
+  }
+
+  .sidebar-user {
+    align-items: center;
+    padding: 0 0 8px;
+  }
+
+  .sidebar-user-name {
+    display: none;
+  }
+
+  .sidebar-logout {
+    width: auto;
+    padding: 8px 0;
+    font-size: 11px;
   }
 }
 
@@ -1228,5 +1427,9 @@ tr:hover td {
 
   .modal-content {
     padding: 20px;
+  }
+
+  .login-card {
+    padding: 24px 16px;
   }
 }
