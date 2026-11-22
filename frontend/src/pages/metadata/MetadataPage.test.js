@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ModalProvider } from '../../components/ModalContext';
@@ -65,6 +65,22 @@ function renderPage() {
       </MemoryRouter>
     </ModalProvider>
   );
+}
+
+// Dispatches a real Tab keydown through the window-level shortcut listener
+// and reports whether the grid intercepted it (preventDefault).
+function pressTab() {
+  let intercepted = true;
+  act(() => {
+    const ev = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(ev);
+    intercepted = ev.defaultPrevented;
+  });
+  return intercepted;
 }
 
 describe('MetadataPage shortcuts', () => {
@@ -139,6 +155,49 @@ describe('MetadataPage shortcuts', () => {
     // Arrows share the same cell-focus navigation.
     await user.keyboard('{ArrowRight}');
     expect(screen.getByTestId('cell-t1-album_artist').closest('td')).toHaveClass(
+      'focused'
+    );
+  });
+
+  test('Tab is released once the pointer leaves the grid card', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('cell-t1-title');
+
+    // Focus a cell and exit edit mode; the cell keeps the virtual focus.
+    await user.click(screen.getByTestId('cell-t1-title'));
+    await user.keyboard('{Escape}');
+
+    // Click a page area outside the grid card (the side panels).
+    await user.click(screen.getByText('Bulk Edit'));
+
+    // Attention has left the card: the cell focus must be gone with it.
+    // Tab stays with the browser (WCAG 2.1.2) instead of being captured,
+    // and the stale cell marker is dropped (onTab not called).
+    expect(pressTab()).toBe(false);
+    expect(screen.getByTestId('cell-t1-title').closest('td')).not.toHaveClass(
+      'focused'
+    );
+  });
+
+  test('Tab is released when the grid card blurs to the outside', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('cell-t1-title');
+
+    // Virtual cell focus, with the DOM focus on a grid control (the
+    // select-all checkbox) inside the card.
+    await user.click(screen.getByTestId('cell-t1-title'));
+    await user.keyboard('{Escape}');
+    const headerBox = screen.getAllByRole('checkbox')[0];
+    await user.click(headerBox);
+
+    // The card-blur boundary: focus moves to a node outside the card.
+    const card = document.querySelector('.metadata-table').closest('.card');
+    fireEvent.focusOut(card, { relatedTarget: document.body });
+
+    expect(pressTab()).toBe(false);
+    expect(screen.getByTestId('cell-t1-title').closest('td')).not.toHaveClass(
       'focused'
     );
   });

@@ -147,6 +147,19 @@ export default function MetadataPage() {
     setFocus((prev) => (prev && !visibleCols.includes(prev.col) ? null : prev));
   }, [visibleCols]);
 
+  // The cell focus is only meaningful while attention is in the grid card.
+  // The card's boundary (pointer press outside it / blur to a node outside,
+  // see TrackGrid) drives `gridFocused`; when it reports that attention has
+  // left, drop the cell focus too, so the grid shortcuts (Tab, Enter,
+  // arrows, fill down) stop acting on a cell the user moved away from —
+  // otherwise Tab stays captured after the first cell click (WCAG 2.1.2).
+  // The drop waits for `editing` to end: the outside press that clears
+  // `gridFocused` arrives before the draft input's blur, and the blur must
+  // still find the focus it commits the draft from.
+  useEffect(() => {
+    if (!editing && !gridFocused) setFocus(null);
+  }, [editing, gridFocused]);
+
   // Esc closes the topmost custom overlay (context modals handle their own).
   useEffect(() => {
     const onKey = (e) => {
