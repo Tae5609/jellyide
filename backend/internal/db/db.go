@@ -210,10 +210,10 @@ func migrate(db *sqlx.DB) error {
 		}
 	}
 
-	// The users table predates the status column (T8): databases created
-	// before the column existed need the ALTER, fresh ones already have it
-	// via the CREATE TABLE. Guard on PRAGMA table_info so the ALTER runs
-	// at most once.
+	// The users CREATE TABLE above intentionally has no status column: the
+	// guarded ALTER below adds it to every database, fresh ones included.
+	// The PRAGMA table_info guard keeps the ALTER idempotent — it runs at
+	// most once per database.
 	var hasStatus int
 	if err := db.Get(&hasStatus, `SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'status'`); err != nil {
 		log.Printf("Migration error: %v", err)
