@@ -64,3 +64,21 @@ func UserFromContext(ctx context.Context) *User {
 	u, _ := ctx.Value(userContextKey{}).(*User)
 	return u
 }
+
+// RequireAdmin restricts a route to admins. It must run after Middleware,
+// which puts the user in the context. When auth is disabled the anonymous
+// superuser counts as admin, consistent with /auth/me.
+func (s *Service) RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.cfg.Enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u := UserFromContext(r.Context())
+		if u == nil || !u.IsAdmin {
+			writeJSONError(w, http.StatusForbidden, "admin required")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

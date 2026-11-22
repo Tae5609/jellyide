@@ -5,10 +5,15 @@ import { useAuth } from '../auth/AuthContext';
 
 export default function Settings() {
   const { showAlert } = useModal();
-  const { user } = useAuth();
+  const { user, providers } = useAuth();
   const [limit, setLimit] = useState(2);
   const [proxy, setProxy] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // With auth disabled the anonymous superuser is an admin, like the
+  // backend treats it.
+  const isAdmin =
+    (providers && providers.enabled === false) || (user && user.is_admin);
 
   useEffect(() => {
     apiFetch('/config')
@@ -78,7 +83,104 @@ export default function Settings() {
         </button>
       </div>
 
+      {isAdmin && <RegistrationCard />}
+
       {user && user.provider === 'local' && <ChangePasswordCard />}
+    </div>
+  );
+}
+
+const REGISTRATION_MODES = [
+  {
+    value: 'admin_only',
+    label: 'Admin only',
+    hint: 'No self sign-up. Only admins can create accounts.',
+  },
+  {
+    value: 'open',
+    label: 'Open',
+    hint: 'Anyone can register and sign in immediately.',
+  },
+  {
+    value: 'approval',
+    label: 'Approval',
+    hint: 'Anyone can register, but new accounts stay pending until an admin approves them.',
+  },
+];
+
+function RegistrationCard() {
+  const [mode, setMode] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => {
+    apiFetch('/admin/settings')
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.registration_mode) setMode(data.registration_mode);
+      })
+      .catch(() => {
+        // A failed load leaves the card empty rather than broken.
+      });
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch('/admin/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ registration_mode: mode })
+      });
+      if (res.ok) {
+        setMsg({ type: 'success', text: 'Registration mode updated.' });
+      } else {
+        let text = 'Failed to update the registration mode.';
+        try {
+          const data = await res.json();
+          if (data && data.error) text = data.error;
+        } catch (err) {
+          // Non-JSON error body; keep the generic message.
+        }
+        setMsg({ type: 'error', text });
+      }
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="card settings-card">
+      <h3 className="settings-card-title">Registration</h3>
+      {msg && <p className={`settings-msg ${msg.type}`}>{msg.text}</p>}
+      {mode !== null && (
+        <>
+          <div className="registration-options">
+            {REGISTRATION_MODES.map(o => (
+              <label
+                key={o.value}
+                className={`registration-option ${mode === o.value ? 'selected' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="registration_mode"
+                  value={o.value}
+                  checked={mode === o.value}
+                  onChange={() => setMode(o.value)}
+                />
+                <span className="registration-option-body">
+                  <span className="registration-option-label">{o.label}</span>
+                  <span className="registration-option-hint">{o.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <button className="btn-primary settings-save" onClick={save} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Registration Mode'}
+          </button>
+        </>
+      )}
     </div>
   );
 }

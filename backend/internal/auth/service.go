@@ -57,6 +57,12 @@ func NewService(cfg Config, database *db.DB) (*Service, error) {
 				return nil, fmt.Errorf("create admin user: %w", err)
 			}
 		}
+
+		// Seed the registration mode from the environment exactly once; a
+		// later admin change in the UI keeps winning over the env value.
+		if err := s.seedRegistrationMode(cfg.RegistrationMode); err != nil {
+			return nil, fmt.Errorf("seed registration mode: %w", err)
+		}
 	}
 
 	s.startSessionCleanup(context.Background())

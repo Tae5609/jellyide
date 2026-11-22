@@ -358,6 +358,56 @@ func TestSAMLCreateSession(t *testing.T) {
 	}
 }
 
+// In approval mode a SAML auto-created user starts pending and the bridge
+// refuses to start a session until an admin approves.
+func TestSAMPendingInApprovalMode(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true, PublicURL: "https://ide.example.com"})
+	if err := svc.SetRegistrationMode(RegistrationModeApproval); err != nil {
+		t.Fatalf("SetRegistrationMode: %v", err)
+	}
+	bridge := &samlSessionBridge{
+		svc: svc,
+		cfg: SAMLConfig{
+			EmailAttr:  "email",
+			NameAttr:   "displayName",
+			GroupsAttr: "groups",
+			AutoCreate: true,
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	if err := bridge.CreateSession(rec, httptest.NewRequest(http.MethodPost, "/api/auth/saml/acs", nil), testSAMLAssertion()); err == nil {
+		t.Fatal("expected an error for a pending SSO user")
+	}
+	u, err := svc.GetUserByUsername("alice@example.com")
+	if err != nil {
+		t.Fatalf("lookup alice: %v", err)
+	}
+	if u.Status != UserStatusPending {
+		t.Fatalf("SAML user status = %q, want pending", u.Status)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == SessionCookieName {
+			t.Fatal("pending SAML login must not set a session cookie")
+		}
+	}
+
+	// After approval the same assertion logs in and creates a session.
+	if err := svc.SetStatus(u.ID, UserStatusActive); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	if err := bridge.CreateSession(rec, httptest.NewRequest(http.MethodPost, "/api/auth/saml/acs", nil), testSAMLAssertion()); err != nil {
+		t.Fatalf("CreateSession after approval: %v", err)
+	}
+	if rec.Code != http.StatusFound {
+		t.Fatalf("CreateSession status = %d, want 302", rec.Code)
+	}
+	if token := cookieValue(t, rec, SessionCookieName); token == "" {
+		t.Fatal("approved SAML login did not set a session cookie")
+	}
+}
+
 func TestSAMLCreateSessionAutoCreateDisabled(t *testing.T) {
 	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true, PublicURL: "https://ide.example.com"})
 	bridge := &samlSessionBridge{

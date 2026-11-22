@@ -17,6 +17,7 @@ const FALLBACK_PROVIDERS = {
   local: false,
   oidc: { enabled: false, name: '' },
   saml: { enabled: false, name: '' },
+  registration: 'admin_only',
 };
 
 async function readJson(res) {

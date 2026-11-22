@@ -314,6 +314,12 @@ func (s *Service) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// 7. Resolve (or provision) the local user, and 8. sync the identity on
 	// every login, start a session, and go home.
+	//
+	// In approval mode a newly auto-created user is pending (see
+	// FindOrCreateExternalUser); in admin_only mode auto-creation only
+	// happens when OIDC_AUTO_CREATE is on. Pending and disabled users may
+	// not log in or hold sessions, so the identity is synced but no session
+	// is started.
 	var user *User
 	if o.cfg.AutoCreate {
 		user, err = s.FindOrCreateExternalUser("oidc", sub, username, email, displayName, isAdmin)
@@ -332,6 +338,14 @@ func (s *Service) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.UpdateExternalIdentity(user.ID, email, displayName, isAdmin); err != nil {
 		log.Printf("[auth] oidc callback: update identity: %v", err)
+	}
+	if user.Status != UserStatusActive {
+		msg := "account disabled"
+		if user.Status == UserStatusPending {
+			msg = "account pending approval"
+		}
+		s.failOIDC(w, r, msg)
+		return
 	}
 	if err := s.TouchLastLogin(user.ID); err != nil {
 		log.Printf("[auth] oidc callback: touch last login: %v", err)
