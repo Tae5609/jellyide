@@ -110,7 +110,22 @@ func (s *Service) UserFromRequest(r *http.Request) (*User, error) {
 		}
 	}
 
-	return s.GetUserByID(row.UserID)
+	user, err := s.GetUserByID(row.UserID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The user was deleted; drop the orphaned session.
+		_, _ = s.db.Exec(`DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
+		return nil, ErrNoSession
+	}
+	if err != nil {
+		return nil, err
+	}
+	// Only active users may hold sessions: a pending or disabled account
+	// loses its sessions the moment it stops being active.
+	if user.Status != UserStatusActive {
+		_, _ = s.db.Exec(`DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
+		return nil, ErrNoSession
+	}
+	return user, nil
 }
 
 // DestroySession deletes the caller's session row (if any) and clears the

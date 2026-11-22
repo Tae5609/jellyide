@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +28,10 @@ type Providers struct {
 	Local   bool         `json:"local"`
 	OIDC    ProviderInfo `json:"oidc"`
 	SAML    ProviderInfo `json:"saml"`
+	// Registration is the current registration mode (admin_only, open or
+	// approval); the login page uses it to decide whether to offer a
+	// "Create account" link.
+	Registration string `json:"registration"`
 }
 
 // providerState holds the mutable provider registrations.
@@ -136,6 +142,8 @@ func (s *Service) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/auth/logout", s.handleLogout).Methods(http.MethodPost)
 	r.HandleFunc("/auth/me", s.handleMe).Methods(http.MethodGet)
 	r.HandleFunc("/auth/password", s.handleChangePassword).Methods(http.MethodPost)
+	r.HandleFunc("/auth/register", s.handleRegister).Methods(http.MethodPost)
+	s.registerAdminRoutes(r)
 	if s.oidc != nil {
 		s.registerOIDCRoutes(r)
 	}
@@ -143,7 +151,112 @@ func (s *Service) RegisterRoutes(r *mux.Router) {
 
 // handleProviders: GET /api/auth/providers
 func (s *Service) handleProviders(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.providers.snapshot(s.cfg))
+	p := s.providers.snapshot(s.cfg)
+	mode, err := s.GetRegistrationMode()
+	if err != nil {
+		log.Printf("[auth] read registration mode: %v", err)
+		mode = RegistrationModeAdminOnly
+	}
+	p.Registration = mode
+	writeJSON(w, http.StatusOK, p)
+}
+
+// usernameRegexp is the shared username rule for local accounts
+// (self-registration and admin-created users).
+var usernameRegexp = regexp.MustCompile(`^[a-zA-Z0-9._-]{3,32}$`)
+
+// minPasswordLength is the shortest accepted password.
+const minPasswordLength = 8
+
+// handleRegister: POST /api/auth/register (public).
+// Creates a local user in open or approval mode; in admin_only mode the
+// endpoint answers 403. Uses the same in-memory failure limiter as login.
+func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !s.cfg.LocalEnabled {
+		writeJSONError(w, http.StatusForbidden, "local login disabled")
+		return
+	}
+
+	mode, err := s.GetRegistrationMode()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if mode == RegistrationModeAdminOnly {
+		writeJSONError(w, http.StatusForbidden, "registration is disabled")
+		return
+	}
+
+	ip := clientIP(r)
+	if s.limiter.blocked(ip) {
+		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
+	if !usernameRegexp.MatchString(req.Username) {
+		writeJSONError(w, http.StatusBadRequest, "invalid username")
+		return
+	}
+	if len(req.Password) < minPasswordLength {
+		writeJSONError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+
+	if _, err := s.GetUserByUsername(req.Username); err == nil {
+		s.limiter.record(ip)
+		writeJSONError(w, http.StatusConflict, "username already taken")
+		return
+	} else if !errors.Is(err, ErrNoUser) {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	status := UserStatusActive
+	if mode == RegistrationModeApproval {
+		status = UserStatusPending
+	}
+	u := &User{
+		ID:       newID(),
+		Username: req.Username,
+		Provider: "local",
+		Email:    strPtrOrNil(req.Email),
+		Status:   status,
+	}
+	hash, err := HashPassword(req.Password)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	u.PasswordHash = &hash
+	if err := s.CreateUser(u); err != nil {
+		// Concurrent registration of the same username loses the race.
+		if strings.Contains(err.Error(), "UNIQUE constraint") {
+			s.limiter.record(ip)
+			writeJSONError(w, http.StatusConflict, "username already taken")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Open mode starts a session immediately; approval mode waits for an
+	// admin, so the browser gets no session cookie.
+	if mode == RegistrationModeOpen {
+		if err := s.StartSession(w, u.ID); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	s.limiter.reset(ip)
+	writeJSON(w, http.StatusCreated, map[string]string{"status": status})
 }
 
 // handleLogin: POST /api/auth/login
@@ -187,6 +300,18 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !valid {
 		s.limiter.record(ip)
 		writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	// The password is correct; only now is the account status revealed,
+	// so a wrong password never leaks whether the account is pending or
+	// disabled. No session is created for non-active users.
+	switch user.Status {
+	case UserStatusPending:
+		writeJSONError(w, http.StatusForbidden, "account pending approval")
+		return
+	case UserStatusDisabled:
+		writeJSONError(w, http.StatusForbidden, "account disabled")
 		return
 	}
 
