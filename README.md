@@ -136,4 +136,4 @@ HTTPS/reverse-proxy, backups, the full env-var table and the OIDC/SAML provider 
 
 ## License
 
-MIT — see the license sections in the source headers.
+This project has no LICENSE file yet; until one is added, all rights are reserved.
