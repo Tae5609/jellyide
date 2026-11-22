@@ -230,6 +230,15 @@ func (s *Service) applyEditsToTrack(track *library.Track, edit NormalizedEdit, c
 
 	// 4. Update the database row. Every edited field except "album"
 	// (handled above) maps to a track column.
+	//
+	// Accepted parity gap (same as the pre-existing ApplyChanges): the
+	// rename on disk has already happened, so a failure here — or of the
+	// process — can leave the renamed file ahead of the database row, and
+	// the rename is not rolled back. An edit without a rename can simply
+	// be re-run; after a title rename, deleting the stale row and
+	// rescanning restores the library. The change row is only recorded
+	// after this DB update succeeds, so a failed edit never leaves a
+	// phantom history entry.
 	sets := []string{}
 	args := []interface{}{}
 	for name, value := range edit.Set {
