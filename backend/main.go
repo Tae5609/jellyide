@@ -22,6 +22,7 @@ import (
 	"yt-scraper/internal/library"
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/scanner"
+	"yt-scraper/internal/ytdlp"
 
 	"github.com/gorilla/mux"
 )
@@ -104,6 +105,14 @@ func main() {
 	jobManager := jobs.NewManager(database)
 	musicScanner := scanner.NewScanner(libService, jobManager, downloadDir)
 	downloader := download.NewDownloader(jobManager, musicScanner, downloadDir)
+
+	// Managed yt-dlp binary (T15). The downloader resolves the binary
+	// path through the manager on every job, so an update takes effect
+	// without a restart. YTDLP_MANAGED=false keeps the system yt-dlp.
+	ytdlpMgr := ytdlp.NewManager(database, jobManager, filepath.Join(downloadDir, ".jellyide", "bin"),
+		ytdlp.ParseManagedEnv(os.Getenv("YTDLP_MANAGED")))
+	downloader.SetYtDlpResolver(ytdlpMgr)
+	ytdlpMgr.SetGate(downloader)
 	metaService := metadata.NewServiceWith(metadata.Deps{
 		DB:      database,
 		Library: libService,
@@ -126,6 +135,13 @@ func main() {
 
 	// SPA Handler for Frontend
 	r.PathPrefix("/").Handler(newSPAHandler(spaBuildDir))
+
+	// yt-dlp updater loop: installs the managed binary on first boot and
+	// checks for new releases on the configured interval. A failure never
+	// breaks downloads (the previous binary stays in place).
+	updaterCtx, stopUpdater := context.WithCancel(context.Background())
+	defer stopUpdater()
+	go ytdlpMgr.Loop(updaterCtx)
 
 	// Wrap the whole router with the auth middleware. The SPA is
 	// same-origin, so no CORS handling is needed.
