@@ -42,9 +42,11 @@ Do **not** use the `task` tool, because it blocks you until every task in the ba
 | T12 backend hardening | T12-backend-bughunt.md | fix/backend-hardening | – (dev finished; needs review) | jelly-reviewer-b next |
 | T6a core docs | T6-project-docs.md (part A) | docs/core-docs | – (start now) | jelly-fast-b |
 | T6b ops docs + smoke test | T6-project-docs.md (part B) | docs/ops-docs | – (start now) | jelly-dev-b |
-| T9 frontend quality | T9-frontend-quality.md | test/frontend-quality | T11 | jelly-dev-b |
+| T14 download retry (manual + auto) | T14-download-retry.md | feat/download-retry | T12 | jelly-dev |
+| T15 yt-dlp updater (admin UI + auto-update) | T15-ytdlp-updater.md | feat/ytdlp-updater | T12, T13 (both touch shared files) | jelly-dev-b |
+| T9 frontend quality | T9-frontend-quality.md | test/frontend-quality | T11, T13, T14, T15 (Prettier reformat must run last) | jelly-dev-b |
 | Follow-ups T13+ | you write them from BUGS.md | fix/... | file-disjoint from in-flight work | any |
-| Docs refresh | – | docs/refresh | T6a, T6b, T9, T11, T12 all merged | jelly-fast-b: re-check that docs match the final code (shortcuts, env vars, endpoints) and fix drift |
+| Docs refresh | – | docs/refresh | T6a, T6b, T9, T11, T12, T14, T15 all merged | jelly-fast-b: re-check that docs match the final code (shortcuts, env vars incl. DOWNLOAD_MAX_RETRIES and YTDLP_MANAGED, endpoints incl. retry and /api/admin/ytdlp) and fix drift |
 
 Already MERGED: T1, T2, T3, T4, T5, T7, T8, T10 (see STATUS.md).
 Worktrees: `/home/tae5609/jellyide-wt/<branch with / replaced by ->`.
