@@ -21,7 +21,9 @@ export default function BulkEditPanel({ selectedCount, onApply, onError }) {
         onError('Title must not be empty');
         return;
       }
-      onApply(field, raw === '' ? null : value);
+      // Stage the trimmed value: the backend stores text verbatim, so a
+      // padded draft would land in tags and history with its spaces.
+      onApply(field, raw === '' ? null : raw);
     }
   };
 
