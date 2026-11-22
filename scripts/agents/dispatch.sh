@@ -2,8 +2,8 @@
 # Start an opencode worker in the background (non-blocking).
 # Usage: dispatch.sh <job-name> <agent> <worktree> <prompt-file>
 #   agent ending in "-b" runs on Orion key B (max 3 parallel);
-#   other agents run on key A (max 3 parallel). The orchestrator also uses key A but is
-#   idle while it waits; a rare overlap gets a 429, which opencode retries with backoff.
+#   other agents run on key A (max 2 parallel; the orchestrator needs the 3rd slot —
+#   a 4th request on a key is rejected with a 429 and kills the run).
 set -euo pipefail
 ROOT=/home/tae5609/jellyide
 RUN="$ROOT/docs/plan/logs/jobs"
@@ -12,7 +12,7 @@ mkdir -p "$RUN"
 name=$1 agent=$2 wt=$3 prompt=$4
 [ -d "$wt" ] || { echo "NO_WORKTREE $wt"; exit 2; }
 [ -f "$prompt" ] || { echo "NO_PROMPT_FILE $prompt"; exit 2; }
-case "$agent" in *-b) lane=B; max=3 ;; *) lane=A; max=3 ;; esac
+case "$agent" in *-b) lane=B; max=3 ;; *) lane=A; max=2 ;; esac
 
 running=0
 for f in "$RUN"/*.pid; do
