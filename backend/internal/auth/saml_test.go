@@ -333,6 +333,11 @@ func TestSAMLCreateSession(t *testing.T) {
 	if user.PasswordHash != nil {
 		t.Fatal("SAML user must not have a local password")
 	}
+	// Like the local and OIDC flows, the SAML login must record the login
+	// time; otherwise the Users page shows "—" for SAML users forever.
+	if user.LastLogin == nil {
+		t.Fatal("SAML login must set last_login")
+	}
 
 	// The session cookie authenticates against the auth API.
 	h := newTestHandler(svc)

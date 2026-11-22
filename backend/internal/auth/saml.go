@@ -315,6 +315,11 @@ func (b *samlSessionBridge) CreateSession(w http.ResponseWriter, _ *http.Request
 		return errors.New("saml: account disabled")
 	}
 
+	// Record the login like the local and OIDC flows do (non-fatal on
+	// failure, so a last_login write error does not break SSO).
+	if err := b.svc.TouchLastLogin(user.ID); err != nil {
+		log.Printf("[auth] saml: touch last login: %v", err)
+	}
 	if err := b.svc.StartSession(w, user.ID); err != nil {
 		return fmt.Errorf("saml: start session: %w", err)
 	}
