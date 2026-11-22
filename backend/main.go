@@ -146,7 +146,6 @@ func main() {
 	// Shut down cleanly on SIGINT/SIGTERM so in-flight requests finish and
 	// the database is closed once.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ListenAndServe() }()
@@ -159,12 +158,13 @@ func main() {
 	case <-ctx.Done():
 		log.Println("Shutting down server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
 		if serr := srv.Shutdown(shutdownCtx); serr != nil {
 			log.Printf("Graceful shutdown failed: %v", serr)
 		}
+		cancel()
 		err = <-serveErr
 	}
+	stop()
 
 	if cerr := database.Close(); cerr != nil {
 		log.Printf("Failed to close database: %v", cerr)
@@ -262,6 +262,7 @@ func newSPAHandler(buildDir string) http.Handler {
 			clean := filepath.Clean(rel)
 			full := filepath.Join(buildDir, clean)
 			if withinDir(buildDir, full) {
+				//nolint:gosec // G703 - rel came from the request path, was NUL-checked and Cleaned, and full is confined to buildDir by the withinDir guard
 				info, err := os.Stat(full)
 				switch {
 				case err == nil && !info.IsDir():
