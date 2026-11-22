@@ -6,9 +6,8 @@ import Settings from './Settings';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// Auth is enabled with a non-local, non-admin user, so Settings renders
-// only the base configuration card (no registration or password card).
-function mockFetch() {
+// Mock fetch for auth and settings.
+function mockFetch({ isAdmin = true } = {}) {
   return jest.fn(async (url, opts = {}) => {
     if (url === '/api/auth/providers') {
       return new Response(
@@ -27,7 +26,7 @@ function mockFetch() {
           id: '1',
           username: 'tester',
           provider: 'oidc',
-          is_admin: false,
+          is_admin: isAdmin,
         }),
         { status: 200 }
       );
@@ -41,12 +40,53 @@ function mockFetch() {
         { status: 200 }
       );
     }
+    if (url === '/api/admin/ytdlp') {
+      return new Response(
+        JSON.stringify({
+          version: '2025.1.15',
+          path: '/media/.jellyide/bin/yt-dlp',
+          managed: true,
+          channel: 'stable',
+          latest_version: '2025.2.2',
+          update_available: true,
+          last_check: '2026-11-22T10:00:00Z',
+          last_result: 'updated to 2025.1.15',
+          auto_update: true,
+          interval_hours: 24,
+          updating: false,
+          has_rollback: true,
+        }),
+        { status: 200 }
+      );
+    }
+    if (url === '/api/admin/ytdlp/check') {
+      return new Response(
+        JSON.stringify({
+          version: '2025.1.15',
+          path: '/media/.jellyide/bin/yt-dlp',
+          managed: true,
+          channel: 'stable',
+          latest_version: '2025.2.2',
+          update_available: true,
+          last_check: '2026-11-22T12:00:00Z',
+          last_result: 'check ok',
+          auto_update: true,
+          interval_hours: 24,
+          updating: false,
+          has_rollback: true,
+        }),
+        { status: 200 }
+      );
+    }
+    if (url === '/api/admin/settings') {
+      return new Response(JSON.stringify({ registration_mode: 'open' }), { status: 200 });
+    }
     return new Response(null, { status: 500 });
   });
 }
 
-async function renderSettings() {
-  const fetchImpl = mockFetch();
+async function renderSettings(opts = {}) {
+  const fetchImpl = mockFetch(opts);
   global.fetch = fetchImpl;
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -76,13 +116,15 @@ const saveButton = (container) =>
   );
 
 function setLimit(container, value) {
-  const input = limitInput(container);
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    'value'
-  ).set;
-  setter.call(input, value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  act(() => {
+    const input = limitInput(container);
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    ).set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 }
 
 async function clickSave(container) {
@@ -151,6 +193,55 @@ describe('Settings concurrent limit validation', () => {
     expect(container.querySelector('.modal-title').textContent).toBe(
       'Settings Saved'
     );
+    await unmount();
+  });
+});
+
+describe('Settings admin controls and yt-dlp card', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('non-admin cannot see save button or yt-dlp card', async () => {
+    const { container, unmount } = await renderSettings({ isAdmin: false });
+
+    // Non-admin sees read-only inputs without Save button
+    expect(saveButton(container)).toBeUndefined();
+    expect(limitInput(container).disabled).toBe(true);
+
+    // yt-dlp card is hidden from non-admin
+    expect(container.querySelector('[data-testid="ytdlp-card"]')).toBeNull();
+    await unmount();
+  });
+
+  test('admin sees yt-dlp card with version info and update controls', async () => {
+    const { fetchImpl, container, unmount } = await renderSettings({ isAdmin: true });
+
+    // Admin sees Save button and enabled inputs
+    expect(saveButton(container)).toBeDefined();
+    expect(limitInput(container).disabled).toBe(false);
+
+    // yt-dlp card is visible
+    const card = container.querySelector('[data-testid="ytdlp-card"]');
+    expect(card).not.toBeNull();
+    expect(card.textContent).toContain('2025.1.15');
+    expect(card.textContent).toContain('Update available');
+
+    // Clicking Check for updates calls /api/admin/ytdlp/check
+    const checkBtn = Array.from(card.querySelectorAll('button')).find(
+      b => b.textContent === 'Check for updates'
+    );
+    expect(checkBtn).toBeDefined();
+
+    await act(async () => {
+      checkBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const checkCalls = fetchImpl.mock.calls.filter(
+      ([url, opts]) => url === '/api/admin/ytdlp/check' && opts && opts.method === 'POST'
+    );
+    expect(checkCalls).toHaveLength(1);
+
     await unmount();
   });
 });
