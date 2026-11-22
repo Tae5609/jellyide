@@ -71,6 +71,27 @@ func TestParseFFProbe(t *testing.T) {
 			},
 		},
 		{
+			// New tag columns: matched case-insensitively, "3/12" track
+			// number, four-digit year from a full date.
+			name:    "full tags with mixed case",
+			fixture: "testdata/fulltags.json",
+			path:    filepath.Join(base, "Artist", "Album", "03 Full.flac"),
+			want: probeInfo{
+				Title:       "Full Tagged",
+				Artist:      "Case Artist",
+				Album:       "Case Album",
+				AlbumArtist: "Case Album Artist",
+				TrackNumber: 3,
+				DiscNumber:  2,
+				Year:        2001,
+				Genre:       "Rock",
+				Composer:    "Case Composer",
+				Comment:     "Case Comment",
+				Duration:    180,
+				Bitrate:     1000000,
+			},
+		},
+		{
 			name:    "invalid json",
 			fixture: "testdata/invalid.json",
 			path:    filepath.Join(base, "Artist", "Album", "x.flac"),
@@ -98,6 +119,62 @@ func TestParseFFProbe(t *testing.T) {
 				t.Fatalf("parseFFProbe = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseTrackNumber(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"3", 3},
+		{"3/12", 3},
+		{" 3 / 12 ", 3},
+		{"0", 0},
+		{"", 0},
+		{"12/", 12},
+		{"/12", 0},
+		{"abc", 0},
+		{"-2", 0},
+	}
+	for _, tt := range tests {
+		if got := parseTrackNumber(tt.in); got != tt.want {
+			t.Fatalf("parseTrackNumber(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseYear(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"2001", 2001},
+		{"2001-05-15", 2001},
+		{"1973", 1973},
+		{"Spring 1973 release", 1973},
+		{"20011231", 2001}, // first four digits of a long run
+		{"999", 0},
+		{"", 0},
+		{"no digits", 0},
+	}
+	for _, tt := range tests {
+		if got := parseYear(tt.in); got != tt.want {
+			t.Fatalf("parseYear(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestTagGetCaseInsensitive(t *testing.T) {
+	tags := map[string]string{"TrAcK": "7/9", "ALBUMARTIST": "Someone"}
+	if got := tagGet(tags, "track", "tracknumber"); got != "7/9" {
+		t.Fatalf("tagGet track = %q, want 7/9", got)
+	}
+	if got := tagGet(tags, "album_artist", "albumartist"); got != "Someone" {
+		t.Fatalf("tagGet albumartist = %q, want Someone", got)
+	}
+	if got := tagGet(tags, "missing"); got != "" {
+		t.Fatalf("tagGet missing = %q, want empty", got)
 	}
 }
 

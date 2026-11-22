@@ -4,9 +4,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -39,6 +41,11 @@ func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service,
 	r.HandleFunc("/library/albums/{id}", getAlbum(lib)).Methods("GET")
 	r.HandleFunc("/library/albums/{id}/rename", renameAlbum(lib)).Methods("POST")
 	r.HandleFunc("/library/albums/{id}", deleteAlbum(lib)).Methods("DELETE")
+	r.HandleFunc("/library/albums/{id}/cover", getAlbumCover(lib)).Methods("GET")
+	r.HandleFunc("/library/albums/{id}/cover", uploadCover(meta)).Methods("POST")
+	r.HandleFunc("/library/albums/{id}/cover/extract", extractCover(meta)).Methods("POST")
+	r.HandleFunc("/library/albums/{id}/cover/from-url", coverFromURL(meta)).Methods("POST")
+	r.HandleFunc("/library/tracks/{id}", getTrack(lib)).Methods("GET")
 	r.HandleFunc("/library/tracks/{id}", deleteTrack(lib)).Methods("DELETE")
 	r.HandleFunc("/library/scan", triggerScan(s)).Methods("POST")
 
@@ -46,6 +53,11 @@ func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service,
 	r.HandleFunc("/metadata/analyze/{album_id}", analyzeAlbum(meta)).Methods("GET")
 	r.HandleFunc("/metadata/preview", previewMetadata(meta)).Methods("POST")
 	r.HandleFunc("/metadata/apply", applyMetadata(meta)).Methods("POST")
+	r.HandleFunc("/metadata/tracks", patchTracks(meta)).Methods("PATCH")
+	r.HandleFunc("/metadata/history", getHistory(meta)).Methods("GET")
+	r.HandleFunc("/metadata/history/{change_set_id}/revert", revertChangeSet(meta)).Methods("POST")
+	r.HandleFunc("/metadata/lookup/search", lookupSearch(meta)).Methods("GET")
+	r.HandleFunc("/metadata/lookup/release/{mbid}", lookupRelease(meta)).Methods("GET")
 }
 
 // writeJSON encodes v as the JSON response body. Write failures (e.g. the
@@ -232,6 +244,37 @@ func getAlbum(lib *library.Service) http.HandlerFunc {
 	}
 }
 
+func getTrack(lib *library.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		res, err := lib.GetTrack(id)
+		if err != nil {
+			sendJSONError(w, "track not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, res)
+	}
+}
+
+func getAlbumCover(lib *library.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		path, ok, err := lib.CoverFilePath(id)
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			sendJSONError(w, "album has no cover", http.StatusNotFound)
+			return
+		}
+		//nolint:gosec // G703 - path comes from the album row via library.CoverFilePath, which confines it to the music dir
+		http.ServeFile(w, r, path)
+	}
+}
+
 func renameAlbum(lib *library.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -312,7 +355,7 @@ func previewMetadata(meta *metadata.Service) http.HandlerFunc {
 		}
 		res, err := meta.PreviewChanges(req)
 		if err != nil {
-			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			writeMetadataError(w, err)
 			return
 		}
 		writeJSON(w, res)
@@ -332,5 +375,208 @@ func applyMetadata(meta *metadata.Service) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// writeMetadataError maps the metadata service's typed errors to the API
+// contract: 400 {"error","field","track_id"}, 404, 409 and 500 otherwise.
+func writeMetadataError(w http.ResponseWriter, err error) {
+	var (
+		valErr   *metadata.ValidationError
+		notFound *metadata.NotFoundError
+		conflict *metadata.ConflictError
+	)
+	switch {
+	case errors.As(err, &valErr):
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		body := map[string]string{"error": valErr.Message}
+		if valErr.Field != "" {
+			body["field"] = valErr.Field
+		}
+		if valErr.TrackID != "" {
+			body["track_id"] = valErr.TrackID
+		}
+		if jsonErr := json.NewEncoder(w).Encode(body); jsonErr != nil {
+			log.Printf("api: writing error response: %v", jsonErr)
+		}
+	case errors.As(err, &notFound):
+		body := map[string]string{"error": notFound.Message}
+		if notFound.TrackID != "" {
+			body["track_id"] = notFound.TrackID
+		}
+		sendJSONBody(w, body, http.StatusNotFound)
+	case errors.As(err, &conflict):
+		body := map[string]string{"error": conflict.Message}
+		if conflict.TrackID != "" {
+			body["track_id"] = conflict.TrackID
+		}
+		sendJSONBody(w, body, http.StatusConflict)
+	default:
+		sendJSONError(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func sendJSONBody(w http.ResponseWriter, body map[string]string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		log.Printf("api: writing error response: %v", err)
+	}
+}
+
+func patchTracks(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Edits []metadata.TrackEdit `json:"edits"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		jobID, changeSetID, err := meta.ApplyTrackEdits(req.Edits)
+		if err != nil {
+			writeMetadataError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]string{
+			"job_id":        jobID,
+			"change_set_id": changeSetID,
+		})
+	}
+}
+
+func getHistory(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		limit := metadata.DefaultHistoryLimit
+		if raw := query.Get("limit"); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 {
+				sendJSONError(w, "limit must be a positive integer", http.StatusBadRequest)
+				return
+			}
+			limit = n
+		}
+		res, err := meta.History(query.Get("album_id"), limit)
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, res)
+	}
+}
+
+func revertChangeSet(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		jobID, changeSetID, err := meta.RevertChangeSet(vars["change_set_id"])
+		if err != nil {
+			writeMetadataError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]string{
+			"job_id":        jobID,
+			"change_set_id": changeSetID,
+		})
+	}
+}
+
+// Cover art handlers
+func uploadCover(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		// The form limit is the in-memory cap; large files spill to disk.
+		//nolint:gosec // G120 - ParseMultipartForm is bounded to the 10 MB cover limit by the size argument
+		if err := r.ParseMultipartForm(metadata.MaxCoverBytes + 512*1024); err != nil {
+			sendJSONError(w, "invalid multipart form or file too large", http.StatusBadRequest)
+			return
+		}
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			sendJSONError(w, "missing file field", http.StatusBadRequest)
+			return
+		}
+		defer func() {
+			if cerr := file.Close(); cerr != nil {
+				log.Printf("api: closing cover upload: %v", cerr)
+			}
+		}()
+
+		jobID, coverURL, err := meta.UploadCover(id, file)
+		if err != nil {
+			writeMetadataError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]string{
+			"job_id": jobID,
+			"path":   coverURL,
+		})
+	}
+}
+
+func extractCover(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		coverURL, err := meta.ExtractCoverArt(id)
+		if err != nil {
+			writeMetadataError(w, err)
+			return
+		}
+		writeJSON(w, map[string]string{"path": coverURL})
+	}
+}
+
+func coverFromURL(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		var req struct {
+			URL string `json:"url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		jobID, coverURL, err := meta.CoverFromURL(id, req.URL)
+		if err != nil {
+			writeMetadataError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]string{
+			"job_id": jobID,
+			"path":   coverURL,
+		})
+	}
+}
+
+// MusicBrainz lookup handlers
+func lookupSearch(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		results, err := meta.SearchMusicBrainz(r.Context(), query.Get("album_id"), query.Get("q"))
+		if err != nil {
+			writeMetadataError(w, err)
+			return
+		}
+		writeJSON(w, results)
+	}
+}
+
+func lookupRelease(meta *metadata.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		res, err := meta.LookupRelease(r.Context(), r.URL.Query().Get("album_id"), vars["mbid"])
+		if err != nil {
+			writeMetadataError(w, err)
+			return
+		}
+		writeJSON(w, res)
 	}
 }

@@ -124,7 +124,7 @@ func TestUpsertAndGetTrack(t *testing.T) {
 	}
 	path := filepath.Join("A", "B", "Song One.flac")
 
-	if err := s.UpsertTrack(albumID, "Song One", path, 60, 900); err != nil {
+	if err := s.UpsertTrack(albumID, "Song One", path, 60, 900, TrackMeta{}); err != nil {
 		t.Fatalf("UpsertTrack: %v", err)
 	}
 	tracks, err := s.GetTracksByAlbum(albumID)
@@ -137,7 +137,7 @@ func TestUpsertAndGetTrack(t *testing.T) {
 	trackID := tracks[0].ID
 
 	// Upsert on the same path updates in place instead of inserting.
-	if err := s.UpsertTrack(albumID, "Song One (remix)", path, 61, 901); err != nil {
+	if err := s.UpsertTrack(albumID, "Song One (remix)", path, 61, 901, TrackMeta{}); err != nil {
 		t.Fatalf("UpsertTrack again: %v", err)
 	}
 	tracks, err = s.GetTracksByAlbum(albumID)
@@ -160,6 +160,81 @@ func TestUpsertAndGetTrack(t *testing.T) {
 	}
 	if _, err := s.GetTrack("missing"); err == nil {
 		t.Fatal("GetTrack for a missing id should error")
+	}
+}
+
+// TestUpsertTrackMeta verifies the optional tag columns round-trip through
+// insert and update, including clearing back to NULL.
+func TestUpsertTrackMeta(t *testing.T) {
+	s, _ := newTestService(t)
+
+	artistID, err := s.EnsureArtist("A")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "B")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	path := filepath.Join("A", "B", "Song.flac")
+
+	str := func(v string) *string { return &v }
+	num := func(v int) *int { return &v }
+
+	meta := TrackMeta{
+		Artist:      str("Tag Artist"),
+		AlbumArtist: str("Tag Album Artist"),
+		TrackNumber: num(3),
+		DiscNumber:  num(1),
+		Year:        num(2001),
+		Genre:       str("Rock"),
+		Composer:    str("Some Composer"),
+		Comment:     str("A comment"),
+	}
+	if err := s.UpsertTrack(albumID, "Song", path, 60, 900, meta); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+	tracks, err := s.GetTracksByAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetTracksByAlbum: %v", err)
+	}
+	got := tracks[0]
+	if got.Artist == nil || *got.Artist != "Tag Artist" {
+		t.Fatalf("artist = %v, want Tag Artist", got.Artist)
+	}
+	if got.AlbumArtist == nil || *got.AlbumArtist != "Tag Album Artist" {
+		t.Fatalf("album_artist = %v", got.AlbumArtist)
+	}
+	if got.TrackNumber == nil || *got.TrackNumber != 3 {
+		t.Fatalf("track_number = %v", got.TrackNumber)
+	}
+	if got.DiscNumber == nil || *got.DiscNumber != 1 {
+		t.Fatalf("disc_number = %v", got.DiscNumber)
+	}
+	if got.Year == nil || *got.Year != 2001 {
+		t.Fatalf("year = %v", got.Year)
+	}
+	if got.Genre == nil || *got.Genre != "Rock" {
+		t.Fatalf("genre = %v", got.Genre)
+	}
+	if got.Composer == nil || *got.Composer != "Some Composer" {
+		t.Fatalf("composer = %v", got.Composer)
+	}
+	if got.Comment == nil || *got.Comment != "A comment" {
+		t.Fatalf("comment = %v", got.Comment)
+	}
+
+	// A meta-less upsert clears the optional columns back to NULL.
+	if err := s.UpsertTrack(albumID, "Song", path, 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack clear: %v", err)
+	}
+	tracks, err = s.GetTracksByAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetTracksByAlbum: %v", err)
+	}
+	if tracks[0].Artist != nil || tracks[0].TrackNumber != nil || tracks[0].Year != nil ||
+		tracks[0].Genre != nil || tracks[0].Composer != nil || tracks[0].Comment != nil {
+		t.Fatalf("track = %+v, want all optional fields NULL", tracks[0])
 	}
 }
 
@@ -203,7 +278,7 @@ func TestRenameAlbum(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	path := filepath.Join(oldDir, "Song One.flac")
-	if err := s.UpsertTrack(albumID, "Song One", path, 60, 900); err != nil {
+	if err := s.UpsertTrack(albumID, "Song One", path, 60, 900, TrackMeta{}); err != nil {
 		t.Fatalf("UpsertTrack: %v", err)
 	}
 
@@ -249,7 +324,7 @@ func TestRenameAlbumSanitizesTitle(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	path := filepath.Join(oldDir, "Song.flac")
-	if err := s.UpsertTrack(albumID, "Song", path, 60, 900); err != nil {
+	if err := s.UpsertTrack(albumID, "Song", path, 60, 900, TrackMeta{}); err != nil {
 		t.Fatalf("UpsertTrack: %v", err)
 	}
 
@@ -273,7 +348,7 @@ func TestDeleteAlbum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureAlbum: %v", err)
 	}
-	if err := s.UpsertTrack(albumID, "Song", filepath.Join(dir, "A", "B", "Song.flac"), 60, 900); err != nil {
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(dir, "A", "B", "Song.flac"), 60, 900, TrackMeta{}); err != nil {
 		t.Fatalf("UpsertTrack: %v", err)
 	}
 
@@ -303,7 +378,7 @@ func TestDeleteTrack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureAlbum: %v", err)
 	}
-	if err := s.UpsertTrack(albumID, "Song", filepath.Join(dir, "A", "B", "Song.flac"), 60, 900); err != nil {
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(dir, "A", "B", "Song.flac"), 60, 900, TrackMeta{}); err != nil {
 		t.Fatalf("UpsertTrack: %v", err)
 	}
 	tracks, err := s.GetTracksByAlbum(albumID)

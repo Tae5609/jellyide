@@ -3,6 +3,7 @@
 package library
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -30,14 +31,36 @@ type Album struct {
 	Artist   string `json:"artist" db:"artist_name"`
 }
 
-// Track is one row in the tracks table.
+// Track is one row in the tracks table. The tag fields are pointers so a
+// missing (NULL) value is distinguishable from an empty one.
 type Track struct {
-	ID       string `json:"id" db:"id"`
-	AlbumID  string `json:"album_id" db:"album_id"`
-	Title    string `json:"title" db:"title"`
-	Path     string `json:"path" db:"path"`
-	Duration int    `json:"duration" db:"duration"`
-	Bitrate  int    `json:"bitrate" db:"bitrate"`
+	ID          string  `json:"id" db:"id"`
+	AlbumID     string  `json:"album_id" db:"album_id"`
+	Title       string  `json:"title" db:"title"`
+	Path        string  `json:"path" db:"path"`
+	Duration    int     `json:"duration" db:"duration"`
+	Bitrate     int     `json:"bitrate" db:"bitrate"`
+	Artist      *string `json:"artist" db:"artist"`
+	AlbumArtist *string `json:"album_artist" db:"album_artist"`
+	TrackNumber *int    `json:"track_number" db:"track_number"`
+	DiscNumber  *int    `json:"disc_number" db:"disc_number"`
+	Year        *int    `json:"year" db:"year"`
+	Genre       *string `json:"genre" db:"genre"`
+	Composer    *string `json:"composer" db:"composer"`
+	Comment     *string `json:"comment" db:"comment"`
+}
+
+// TrackMeta holds the optional tag columns of a track. A nil field means
+// "not set" (stored as NULL).
+type TrackMeta struct {
+	Artist      *string
+	AlbumArtist *string
+	TrackNumber *int
+	DiscNumber  *int
+	Year        *int
+	Genre       *string
+	Composer    *string
+	Comment     *string
 }
 
 // Service provides the library queries and mutations.
@@ -230,23 +253,95 @@ func (s *Service) SetAlbumCover(albumID string, coverPath string) error {
 	return err
 }
 
-// UpsertTrack inserts or updates (by file path) the track of an album.
-func (s *Service) UpsertTrack(albumID string, title, path string, duration, bitrate int) error {
+// AlbumDir returns the on-disk directory of an album: the directory of its
+// first track, or <music dir>/<artist>/<album> when it has no tracks.
+func (s *Service) AlbumDir(album *Album) (string, error) {
+	tracks, err := s.GetTracksByAlbum(album.ID)
+	if err != nil {
+		return "", err
+	}
+	if len(tracks) > 0 {
+		return filepath.Dir(tracks[0].Path), nil
+	}
+	return filepath.Join(s.downloadDir, sanitizeFilename(album.Artist), sanitizeFilename(album.Title)), nil
+}
+
+// SaveCoverArt writes cover bytes into the album directory as
+// cover.<ext> and stores the /media/ URL on the album row.
+func (s *Service) SaveCoverArt(album *Album, data []byte, ext string) (string, error) {
+	dir, err := s.AlbumDir(album)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "cover."+ext)
+	if err := os.WriteFile(path, data, 0o644); err != nil { //nolint:gosec // G306 - cover art is served to authenticated users
+		return "", err
+	}
+	rel, err := filepath.Rel(s.downloadDir, path)
+	if err != nil {
+		return "", err
+	}
+	mediaURL := "/media/" + filepath.ToSlash(rel)
+	if err := s.SetAlbumCover(album.ID, mediaURL); err != nil {
+		return "", err
+	}
+	return mediaURL, nil
+}
+
+// CoverFilePath resolves the album's stored cover URL to a path inside the
+// music dir. It reports false when the album has no cover, and refuses
+// URLs that would escape the music dir.
+func (s *Service) CoverFilePath(albumID string) (string, bool, error) {
+	album, err := s.GetAlbum(albumID)
+	if err != nil {
+		return "", false, err
+	}
+	if album.CoverArt == "" {
+		return "", false, nil
+	}
+	rel := strings.TrimPrefix(album.CoverArt, "/media/")
+	if rel == album.CoverArt {
+		return "", false, fmt.Errorf("cover %q is not a media URL", album.CoverArt)
+	}
+	rel = filepath.Clean(rel)
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false, fmt.Errorf("invalid cover path %q", album.CoverArt)
+	}
+	full := filepath.Join(s.downloadDir, rel)
+	if full != s.downloadDir && !strings.HasPrefix(full, s.downloadDir+string(os.PathSeparator)) {
+		return "", false, fmt.Errorf("cover path escapes the music dir")
+	}
+	return full, true, nil
+}
+
+// UpsertTrack inserts or updates (by file path) the track of an album,
+// including its optional tag columns.
+func (s *Service) UpsertTrack(albumID string, title, path string, duration, bitrate int, meta TrackMeta) error {
 	var id string
 	err := s.db.Get(&id, "SELECT id FROM tracks WHERE path = ?", path)
 	if err == nil {
 		_, err = s.db.Exec(`
-			UPDATE tracks SET title = ?, album_id = ?, duration = ?, bitrate = ?
+			UPDATE tracks SET title = ?, album_id = ?, duration = ?, bitrate = ?,
+				artist = ?, album_artist = ?, track_number = ?, disc_number = ?,
+				year = ?, genre = ?, composer = ?, comment = ?
 			WHERE id = ?
-		`, title, albumID, duration, bitrate, id)
+		`, title, albumID, duration, bitrate,
+			meta.Artist, meta.AlbumArtist, meta.TrackNumber, meta.DiscNumber,
+			meta.Year, meta.Genre, meta.Composer, meta.Comment, id)
 		return err
 	}
 
 	id = uuid.New().String()
 	_, err = s.db.Exec(`
-		INSERT INTO tracks (id, album_id, title, path, duration, bitrate)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, id, albumID, title, path, duration, bitrate)
+		INSERT INTO tracks (id, album_id, title, path, duration, bitrate,
+			artist, album_artist, track_number, disc_number, year, genre, composer, comment)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, albumID, title, path, duration, bitrate,
+		meta.Artist, meta.AlbumArtist, meta.TrackNumber, meta.DiscNumber,
+		meta.Year, meta.Genre, meta.Composer, meta.Comment)
 	return err
 }
 

@@ -9,12 +9,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"yt-scraper/internal/jobs"
 	"yt-scraper/internal/library"
 )
+
+// yearRegexp finds the first run of four or more digits (a year).
+var yearRegexp = regexp.MustCompile(`\d{4,}`)
 
 // Scanner indexes media files found under a base directory.
 type Scanner struct {
@@ -45,15 +49,66 @@ type FFProbeOutput struct {
 
 // probeInfo is the per-file metadata derived by parseFFProbe.
 type probeInfo struct {
-	Title    string
-	Artist   string
-	Album    string
-	Duration int
-	Bitrate  int
+	Title       string
+	Artist      string
+	Album       string
+	AlbumArtist string
+	TrackNumber int
+	DiscNumber  int
+	Year        int
+	Genre       string
+	Composer    string
+	Comment     string
+	Duration    int
+	Bitrate     int
 }
 
-// parseFFProbe parses ffprobe JSON output and derives title, artist,
-// album, duration and bitrate for the file at path. Fallbacks: the title
+// tagGet looks up a tag key case-insensitively, trying the candidate keys
+// in order (ffprobe reports Vorbis comments lower-cased, but ID3-derived
+// tags may differ).
+func tagGet(tags map[string]string, candidates ...string) string {
+	for key, value := range tags {
+		lower := strings.ToLower(key)
+		for _, c := range candidates {
+			if lower == c {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+// parseTrackNumber extracts the track number from values like "3" or
+// "3/12"; it returns 0 when the value carries no usable number.
+func parseTrackNumber(value string) int {
+	value = strings.TrimSpace(value)
+	if i := strings.IndexByte(value, '/'); i >= 0 {
+		value = value[:i]
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// parseYear takes the first four digits of the first run of four or more
+// digits in values like "2001", "2001-05-15" or "Spring 1973"; it returns 0
+// when none is present.
+func parseYear(value string) int {
+	m := yearRegexp.FindString(value)
+	if m == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(m[:4])
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// parseFFProbe parses ffprobe JSON output and derives the track's tag
+// fields, duration and bitrate for the file at path. Fallbacks: the title
 // comes from the file name, artist and album from the directory layout
 // relative to basePath.
 func parseFFProbe(data []byte, path, basePath string) (probeInfo, error) {
@@ -64,10 +119,17 @@ func parseFFProbe(data []byte, path, basePath string) (probeInfo, error) {
 
 	tags := out.Format.Tags
 	info := probeInfo{
-		Title:  tags["title"],
-		Artist: tags["artist"],
-		Album:  tags["album"],
+		Title:       tagGet(tags, "title"),
+		Artist:      tagGet(tags, "artist"),
+		Album:       tagGet(tags, "album"),
+		AlbumArtist: tagGet(tags, "album_artist", "albumartist"),
+		Genre:       tagGet(tags, "genre"),
+		Composer:    tagGet(tags, "composer"),
+		Comment:     tagGet(tags, "comment"),
 	}
+	info.TrackNumber = parseTrackNumber(tagGet(tags, "track", "tracknumber", "track_number"))
+	info.DiscNumber = parseTrackNumber(tagGet(tags, "disc", "discnumber", "disc_number"))
+	info.Year = parseYear(tagGet(tags, "date", "year"))
 	if info.Title == "" {
 		info.Title = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
@@ -193,10 +255,39 @@ func (s *Scanner) processFile(path string) {
 
 	s.detectCover(albumID, filepath.Dir(path))
 
-	err = s.lib.UpsertTrack(albumID, info.Title, path, info.Duration, info.Bitrate)
+	err = s.lib.UpsertTrack(albumID, info.Title, path, info.Duration, info.Bitrate, trackMetaFromProbe(info))
 	if err != nil {
 		log.Printf("Error upserting track %s: %v", info.Title, err)
 	}
+}
+
+// trackMetaFromProbe converts the optional probe fields into a library
+// TrackMeta (zero/empty values become NULL).
+func trackMetaFromProbe(info probeInfo) library.TrackMeta {
+	return library.TrackMeta{
+		Artist:      ptrIfNotEmpty(info.Artist),
+		AlbumArtist: ptrIfNotEmpty(info.AlbumArtist),
+		TrackNumber: ptrIfNotZero(info.TrackNumber),
+		DiscNumber:  ptrIfNotZero(info.DiscNumber),
+		Year:        ptrIfNotZero(info.Year),
+		Genre:       ptrIfNotEmpty(info.Genre),
+		Composer:    ptrIfNotEmpty(info.Composer),
+		Comment:     ptrIfNotEmpty(info.Comment),
+	}
+}
+
+func ptrIfNotEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func ptrIfNotZero(n int) *int {
+	if n == 0 {
+		return nil
+	}
+	return &n
 }
 
 func (s *Scanner) detectCover(albumID string, dir string) {

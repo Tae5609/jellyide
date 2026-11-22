@@ -1,0 +1,21 @@
+{
+    "format": {
+        "filename": "/music/Artist/Album/03 Full.flac",
+        "nb_streams": 1,
+        "format_name": "flac",
+        "duration": "180.0",
+        "bit_rate": "1000000",
+        "tags": {
+            "title": "Full Tagged",
+            "ARTIST": "Case Artist",
+            "Album": "Case Album",
+            "ALBUM_ARTIST": "Case Album Artist",
+            "TRACK": "3/12",
+            "Disc": "2/3",
+            "DATE": "2001-05-15",
+            "genre": "Rock",
+            "COMPOSER": "Case Composer",
+            "comment": "Case Comment"
+        }
+    }
+}

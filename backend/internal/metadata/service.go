@@ -5,27 +5,68 @@ package metadata
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
 	"yt-scraper/internal/db"
+	"yt-scraper/internal/jobs"
 	"yt-scraper/internal/library"
+	"yt-scraper/internal/musicbrainz"
 )
+
+// Deps is the wiring of a Service. Zero fields fall back to the
+// production defaults (Python tag writer, public MusicBrainz client, a
+// cover-fetching HTTP client).
+type Deps struct {
+	DB          *db.DB
+	Library     *library.Service
+	Jobs        *jobs.Manager
+	Tags        TagWriter
+	MusicBrainz *musicbrainz.Client
+	HTTPClient  *http.Client
+}
 
 // Service applies and previews metadata changes.
 type Service struct {
-	db  *db.DB
-	lib *library.Service
+	db         *db.DB
+	lib        *library.Service
+	jm         *jobs.Manager
+	tags       TagWriter
+	mb         *musicbrainz.Client
+	httpClient *http.Client
 }
 
-// NewService builds a metadata Service.
+// NewServiceWith builds a metadata Service with the given dependencies.
+func NewServiceWith(d Deps) *Service {
+	s := &Service{db: d.DB, lib: d.Library, jm: d.Jobs}
+	if d.Tags != nil {
+		s.tags = d.Tags
+	} else {
+		s.tags = pythonTagWriter{}
+	}
+	if d.MusicBrainz != nil {
+		s.mb = d.MusicBrainz
+	} else {
+		s.mb = musicbrainz.NewClient(musicbrainz.DefaultBaseURL)
+	}
+	if d.HTTPClient != nil {
+		s.httpClient = d.HTTPClient
+	} else {
+		s.httpClient = newCoverClient()
+	}
+	return s
+}
+
+// NewService builds a metadata Service with production defaults.
 func NewService(db *db.DB, lib *library.Service) *Service {
-	return &Service{db: db, lib: lib}
+	return NewServiceWith(Deps{DB: db, Library: lib})
 }
 
 // Pattern is one candidate shared substring with its score.
@@ -146,25 +187,46 @@ func isJunk(s string) bool {
 	return false
 }
 
-// PreviewRequest is the /metadata/preview request body.
+// previewFields are the fields the find/replace preview can operate on.
+var previewFields = map[string]bool{
+	"title":        true,
+	"artist":       true,
+	"album_artist": true,
+	"genre":        true,
+	"composer":     true,
+	"comment":      true,
+}
+
+// PreviewRequest is the /metadata/preview request body. Field selects the
+// track field the operations apply to (default "title").
 type PreviewRequest struct {
 	Action   string   `json:"action"`
 	Target   string   `json:"target"`
 	Value    string   `json:"value"`
 	TrackIDs []string `json:"track_ids"`
+	Field    string   `json:"field"`
 }
 
-// PreviewResponse is one track's before/after title.
+// PreviewResponse is one track's before/after value for the previewed
+// field (the JSON keys stay old_title/new_title for API compatibility).
 type PreviewResponse struct {
 	TrackID  string `json:"track_id"`
 	OldTitle string `json:"old_title"`
 	NewTitle string `json:"new_title"`
 }
 
-// PreviewChanges computes the new title for each track without touching
-// anything. Unknown track ids are skipped; an invalid regex leaves the
-// title unchanged.
+// PreviewChanges computes the new value of the selected field for each
+// track without touching anything. Unknown track ids are skipped; an
+// invalid regex leaves the value unchanged.
 func (s *Service) PreviewChanges(req PreviewRequest) ([]PreviewResponse, error) {
+	field := req.Field
+	if field == "" {
+		field = "title"
+	}
+	if !previewFields[field] {
+		return nil, &ValidationError{Message: "invalid field " + strconv.Quote(field)}
+	}
+
 	var results []PreviewResponse
 	for _, id := range req.TrackIDs {
 		track, err := s.lib.GetTrack(id)
@@ -172,28 +234,56 @@ func (s *Service) PreviewChanges(req PreviewRequest) ([]PreviewResponse, error) 
 			continue
 		}
 
-		newTitle := track.Title
+		oldValue := trackFieldValue(track, field)
+		newValue := oldValue
 		switch req.Action {
 		case "replace":
-			newTitle = strings.ReplaceAll(track.Title, req.Target, req.Value)
+			newValue = strings.ReplaceAll(oldValue, req.Target, req.Value)
 		case "prefix":
-			newTitle = req.Value + track.Title
+			newValue = req.Value + oldValue
 		case "suffix":
-			newTitle = track.Title + req.Value
+			newValue = oldValue + req.Value
 		case "regex":
 			re, err := regexp.Compile(req.Target)
 			if err == nil {
-				newTitle = re.ReplaceAllString(track.Title, req.Value)
+				newValue = re.ReplaceAllString(oldValue, req.Value)
 			}
 		}
 
 		results = append(results, PreviewResponse{
 			TrackID:  id,
-			OldTitle: track.Title,
-			NewTitle: strings.TrimSpace(newTitle),
+			OldTitle: oldValue,
+			NewTitle: strings.TrimSpace(newValue),
 		})
 	}
 	return results, nil
+}
+
+// trackFieldValue returns the current value of a track field.
+func trackFieldValue(track *library.Track, field string) string {
+	switch field {
+	case "title":
+		return track.Title
+	case "artist":
+		return deref(track.Artist)
+	case "album_artist":
+		return deref(track.AlbumArtist)
+	case "genre":
+		return deref(track.Genre)
+	case "composer":
+		return deref(track.Composer)
+	case "comment":
+		return deref(track.Comment)
+	default:
+		return ""
+	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // ApplyChanges writes the previewed titles: tag the file (Python helper),
