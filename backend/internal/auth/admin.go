@@ -4,8 +4,10 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -80,6 +82,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.RecordAudit(adminActor(r), AuditActionCreateUser, req.Username, "")
 	writeJSON(w, http.StatusCreated, u)
 }
 
@@ -128,15 +131,19 @@ func (s *Service) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.UpdateUser(id, UserPatch{
+	p := UserPatch{
 		IsAdmin:     patch.IsAdmin,
 		Status:      patch.Status,
 		Email:       patch.Email,
 		DisplayName: patch.DisplayName,
-	}); err != nil {
+	}
+	if err := s.UpdateUser(id, p); err != nil {
 		log.Printf("[auth] patch user: %v", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if summary := patchSummary(p); summary != "" {
+		s.RecordAudit(adminActor(r), AuditActionPatchUser, target.Username, summary)
 	}
 	// Disabling (or suspending as pending) ends every session the user
 	// holds.
@@ -196,6 +203,7 @@ func (s *Service) handleResetUserPassword(w http.ResponseWriter, r *http.Request
 		// The id is not logged: it is request input (gosec G706).
 		log.Printf("[auth] delete sessions after password reset: %v", err)
 	}
+	s.RecordAudit(adminActor(r), AuditActionResetPassword, target.Username, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -233,6 +241,7 @@ func (s *Service) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.RecordAudit(adminActor(r), AuditActionDeleteUser, target.Username, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -265,7 +274,28 @@ func (s *Service) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.RecordAudit(adminActor(r), AuditActionRegistrationMode, "", "mode="+req.RegistrationMode)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// patchSummary renders the fields a UserPatch changes as a compact audit
+// detail string ("is_admin=true status=disabled"). It reports only the
+// fields actually carried, so a no-op patch renders as the empty string.
+func patchSummary(p UserPatch) string {
+	var parts []string
+	if p.IsAdmin != nil {
+		parts = append(parts, fmt.Sprintf("is_admin=%t", *p.IsAdmin))
+	}
+	if p.Status != nil {
+		parts = append(parts, "status="+*p.Status)
+	}
+	if p.Email != nil {
+		parts = append(parts, "email set")
+	}
+	if p.DisplayName != nil {
+		parts = append(parts, "display_name set")
+	}
+	return strings.Join(parts, " ")
 }
 
 // validUserStatus reports whether status is one of the three user statuses.
