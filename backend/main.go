@@ -27,6 +27,12 @@ import (
 const spaBuildDir = "./frontend/build"
 
 func main() {
+	// The admin recovery CLI: `server admin <command>` operates on the
+	// database directly; without arguments the server runs, as before.
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		os.Exit(runAdmin(os.Args[2:], os.Stdin, os.Stdout))
+	}
+
 	// Initialize config
 	downloadDir := getEnv("DOWNLOAD_DIR", "/mnt/media/music")
 	dbPath := filepath.Join(downloadDir, "jellyide.db")

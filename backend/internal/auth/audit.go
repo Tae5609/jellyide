@@ -42,6 +42,13 @@ func (s *Service) RecordAudit(actor, action, target, detail string) {
 	}
 }
 
+// CountAudit returns the number of audit_log rows for (actor, action).
+func (s *Service) CountAudit(actor, action string) (int, error) {
+	var n int
+	err := s.db.Get(&n, `SELECT COUNT(*) FROM audit_log WHERE actor = ? AND action = ?`, actor, action)
+	return n, err
+}
+
 // adminActor returns the acting admin's username for an audit row.
 func adminActor(r *http.Request) string {
 	if u := UserFromContext(r.Context()); u != nil {

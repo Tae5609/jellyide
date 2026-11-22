@@ -220,6 +220,30 @@ func TestLoginRateLimit(t *testing.T) {
 	}
 }
 
+// The admin CLI's `unlock` command clears the login rate limiter; the
+// limiter is in memory per process, so a restart clears it as well.
+func TestClearLoginRateLimit(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	for i := 0; i < loginFailureLimit; i++ {
+		svc.limiter.record("192.0.2.10")
+	}
+	if !svc.limiter.blocked("192.0.2.10") {
+		t.Fatal("limiter should be blocked after the failure limit")
+	}
+	svc.ClearLoginRateLimit()
+	if svc.limiter.blocked("192.0.2.10") {
+		t.Fatal("limiter should be unblocked after ClearLoginRateLimit")
+	}
+	// A fresh history can reach the limit again.
+	for i := 0; i < loginFailureLimit; i++ {
+		svc.limiter.record("192.0.2.11")
+	}
+	if !svc.limiter.blocked("192.0.2.11") {
+		t.Fatal("limiter should block again after a fresh failure history")
+	}
+}
+
 func TestMiddlewareRequiresSession(t *testing.T) {
 	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
 	h := newTestHandler(svc)

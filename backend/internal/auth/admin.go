@@ -25,6 +25,13 @@ func (s *Service) registerAdminRoutes(r *mux.Router) {
 	admin.HandleFunc("/settings", s.handlePutSettings).Methods(http.MethodPut)
 }
 
+// IsLastActiveAdmin reports whether the user is the only active admin. The
+// web admin API and the recovery CLI both refuse actions that would leave
+// the instance without an active admin.
+func (s *Service) IsLastActiveAdmin(u *User) (bool, error) {
+	return s.isLastActiveAdmin(u)
+}
+
 // isLastActiveAdmin reports whether the user is the only active admin.
 func (s *Service) isLastActiveAdmin(u *User) (bool, error) {
 	if !u.IsAdmin || u.Status != UserStatusActive {
@@ -65,7 +72,7 @@ func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
-	if len(req.Password) < minPasswordLength {
+	if len(req.Password) < MinPasswordLength {
 		writeJSONError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
@@ -185,7 +192,7 @@ func (s *Service) handleResetUserPassword(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if len(req.NewPassword) < minPasswordLength {
+	if len(req.NewPassword) < MinPasswordLength {
 		writeJSONError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}

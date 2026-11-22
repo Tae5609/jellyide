@@ -82,7 +82,7 @@ func (s *Service) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
-	if len(req.Password) < minPasswordLength {
+	if len(req.Password) < MinPasswordLength {
 		writeJSONError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}

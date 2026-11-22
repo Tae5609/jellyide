@@ -188,8 +188,14 @@ func (s *Service) handleProviders(w http.ResponseWriter, _ *http.Request) {
 // (self-registration and admin-created users).
 var usernameRegexp = regexp.MustCompile(`^[a-zA-Z0-9._-]{3,32}$`)
 
-// minPasswordLength is the shortest accepted password.
-const minPasswordLength = 8
+// ValidUsername reports whether username matches the local-account rule
+// shared by self-registration, admin-created users and the setup wizard.
+func ValidUsername(username string) bool {
+	return usernameRegexp.MatchString(username)
+}
+
+// MinPasswordLength is the shortest accepted password.
+const MinPasswordLength = 8
 
 // handleRegister: POST /api/auth/register (public).
 // Creates a local user in open or approval mode; in admin_only mode the
@@ -228,7 +234,7 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
-	if len(req.Password) < minPasswordLength {
+	if len(req.Password) < MinPasswordLength {
 		writeJSONError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
