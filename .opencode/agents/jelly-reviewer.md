@@ -1,6 +1,6 @@
 ---
-description: Reviews a JellyIDE worktree against its task brief and the conventions — correctness, security, tests, scope, commit hygiene. Re-runs all gates. Never edits code.
-mode: subagent
+description: "[Lane A / Orion key A] Reviews a JellyIDE worktree against its task brief and the conventions — correctness, security, tests, scope, commit hygiene. Re-runs all gates. Never edits code."
+mode: all
 model: orion/Qwen 3.8-27B
 temperature: 0.1
 permission:

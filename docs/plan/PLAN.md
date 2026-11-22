@@ -101,12 +101,12 @@ Routes:
 ## Execution: self-orchestrating opencode agents on Orion (`orion/Qwen 3.8-27B`)
 
 Agents are defined in `.opencode/agents/`:
-- `orchestrator` (primary): runs the waves, delegates with the `task` tool, and handles git and GitHub (push, `gh pr create`, wait for CI, squash-merge). It keeps `docs/plan/STATUS.md` current.
-- `jelly-dev` (subagent): implements one brief inside its own git worktree `../jellyide-wt/<task>`, runs the verify commands, and commits.
-- `jelly-reviewer` (subagent, cannot edit): reviews the diff against the brief and the security checklist, re-runs verify, and replies APPROVE or CHANGES. There are at most 3 dev↔review rounds, then the task is marked BLOCKED.
+- `orchestrator` (primary, lane A): the product owner. It schedules tasks by dependency, dispatches background workers, and handles git and GitHub (push, PR, CI, squash-merge). It keeps `docs/plan/STATUS.md` current.
+- Workers: `jelly-dev` / `jelly-reviewer` (lane A, Orion key A, 27B), `jelly-dev-b` / `jelly-reviewer-b` (lane B, Orion key B, 27B), and `jelly-fast-b` (lane B, Flash-Next, for docs and mechanical fixes).
+- Dispatch is non-blocking through `scripts/agents/dispatch.sh`, `wait.sh` and `status.sh`. Each worker is its own `opencode run` process (logs in `docs/plan/logs/jobs/`).
 
-Concurrency: Orion allows 3 concurrent requests, so there are at most 3 parallel `task` calls (2 if rate-limited).
-Launch: `opencode run --pure --agent orchestrator --auto --dir /home/tae5609/jellyide "Execute docs/plan/PLAN.md"` (log in `docs/plan/logs/orchestrator.log`).
+Concurrency: 6 Orion requests in total. Lane A has the orchestrator plus 2 workers, and lane B has 3 workers.
+Launch: `opencode run --pure --agent orchestrator --auto --dir /home/tae5609/jellyide "Resume the roadmap"`.
 
 Waves (dependency order; each task has a brief in `docs/plan/tasks/`):
 | Wave | Task | Branch | Depends on |
