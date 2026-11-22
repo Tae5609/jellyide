@@ -4,6 +4,7 @@ package download
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -65,6 +66,21 @@ type Details struct {
 	Thumbnail string `json:"thumbnail"`
 }
 
+// Resolver reports the yt-dlp binary to use. The downloader consults it for
+// every job, so a managed-binary update takes effect without a restart.
+type Resolver interface {
+	Path() string
+}
+
+// fixedPath is a Resolver that always returns the same path.
+type fixedPath string
+
+func (f fixedPath) Path() string { return string(f) }
+
+// ErrBusy is returned by WaitForIdle when downloads are still running when
+// the timeout elapses.
+var ErrBusy = errors.New("downloads still running")
+
 // Downloader manages the download queue, the concurrency limit and the
 // automatic retry of transiently failed downloads.
 type Downloader struct {
@@ -77,7 +93,8 @@ type Downloader struct {
 	proxy           string
 	mu              sync.RWMutex
 	cond            *sync.Cond
-	ytDlpPath       string
+	resolver        Resolver
+	paused          bool
 	maxRetries      int
 	now             func() time.Time
 }
@@ -119,7 +136,7 @@ func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir str
 		downloadDir:     downloadDir,
 		queue:           make(chan string, 5000), // Increased buffer
 		concurrentLimit: limit,
-		ytDlpPath:       "yt-dlp",
+		resolver:        fixedPath("yt-dlp"),
 		maxRetries:      MaxRetriesFromEnv(),
 		now:             time.Now,
 	}
@@ -230,6 +247,71 @@ func (d *Downloader) RetryFailedDownloads() (int, error) {
 	return len(retried), nil
 }
 
+// SetYtDlpResolver swaps the binary resolver (e.g. for the managed yt-dlp
+// updater). In-flight downloads keep the binary they started with; jobs
+// started afterwards pick up the new path.
+func (d *Downloader) SetYtDlpResolver(res Resolver) {
+	d.mu.Lock()
+	d.resolver = res
+	d.mu.Unlock()
+}
+
+// YtDlpPath returns the binary path the resolver currently reports.
+func (d *Downloader) YtDlpPath() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.resolver.Path()
+}
+
+// Pause stops the dispatcher from starting new downloads. Already running
+// downloads are unaffected.
+func (d *Downloader) Pause() {
+	d.mu.Lock()
+	d.paused = true
+	d.mu.Unlock()
+}
+
+// Resume allows the dispatcher to start new downloads again.
+func (d *Downloader) Resume() {
+	d.mu.Lock()
+	d.paused = false
+	d.cond.Broadcast()
+	d.mu.Unlock()
+}
+
+// ActiveDownloads reports how many downloads are currently running.
+func (d *Downloader) ActiveDownloads() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.activeDownloads
+}
+
+// WaitForIdle blocks until no download is running, or the timeout elapses.
+// It returns ErrBusy in the latter case. A one-second heartbeat wakes the
+// wait so the deadline is re-checked even when no download finishes.
+func (d *Downloader) WaitForIdle(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	go func() {
+		for range ticker.C {
+			d.mu.Lock()
+			d.cond.Broadcast()
+			d.mu.Unlock()
+		}
+	}()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for d.activeDownloads > 0 {
+		if time.Now().After(deadline) {
+			return ErrBusy
+		}
+		d.cond.Wait()
+	}
+	return nil
+}
+
 // setStatus updates the job status and logs failures; a status write must
 // never fail the download pipeline itself.
 func (d *Downloader) setStatus(id string, status jobs.JobStatus, progress, errMsg string) {
@@ -238,17 +320,23 @@ func (d *Downloader) setStatus(id string, status jobs.JobStatus, progress, errMs
 	}
 }
 
+// waitForSlot blocks until a concurrency slot is free and the dispatcher
+// is not paused, then takes the slot.
+func (d *Downloader) waitForSlot() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for d.paused || d.activeDownloads >= d.concurrentLimit {
+		d.cond.Wait()
+	}
+	d.activeDownloads++
+}
+
 func (d *Downloader) dispatcher() {
 	for jobID := range d.queue {
 		if d.deferredRetry(jobID) {
 			continue
 		}
-		d.mu.Lock()
-		for d.activeDownloads >= d.concurrentLimit {
-			d.cond.Wait()
-		}
-		d.activeDownloads++
-		d.mu.Unlock()
+		d.waitForSlot()
 
 		go func(id string) {
 			defer func() {
@@ -323,7 +411,9 @@ func (d *Downloader) processDownload(jobID string) {
 	outTemplate := filepath.Join(outDir, title+".%(ext)s")
 	args := buildArgs(details, outTemplate, d.GetProxy())
 
-	cmd := exec.Command(d.ytDlpPath, args...) //nolint:gosec // G204 - ytDlpPath is the fixed "yt-dlp" binary; user values only ever fill named option values (see buildArgs)
+	// The binary is resolved per job so a managed yt-dlp update takes
+	// effect without a restart.
+	cmd := exec.Command(d.YtDlpPath(), args...) //nolint:gosec // G204 - the resolver is a fixed system/managed yt-dlp binary; user values only ever fill named option values (see buildArgs)
 
 	output, err := cmd.CombinedOutput()
 	outputStr := string(output)
