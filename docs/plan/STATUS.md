@@ -12,10 +12,12 @@ Product owner: opencode `orchestrator` agent. Update after every state change.
 | 2 | T5 SAML | feat/auth-saml | #8 | MERGED | a9af9a3; APPROVE round 1 + rebase-conflict re-review (main.go: OIDC+SAML wiring both kept) |
 | 3 | T8 registration + users | feat/users-registration | #12 | MERGED | a346e38; APPROVE round 1 (2 MINORs → BUGS.md, T12 queue); 34 frontend tests |
 | 3 | T10 metadata backend | feat/metadata-fields | #13 | MERGED | 5d9c7ef; APPROVE round 2 (round-1 MAJOR: album edit never updated DB — fixed + tested); rebase conflict with T8 in db.go resolved keep-both, re-reviewed; 30 pytest |
-| 4 | T11 metadata UI + shortcuts | feat/metadata-editor-ui | – | TODO | |
-| 4 | T12 backend hardening | fix/backend-hardening | – | TODO | |
-| 5 | T9 frontend quality | test/frontend-quality | – | TODO | |
-| 5 | T6 project docs | docs/project-docs | – | TODO | |
+| 4 | T11 metadata UI + shortcuts | feat/metadata-editor-ui | – | REVIEW r1 | dev session interrupted but work fully committed (4 commits, clean tree) — straight to review after reboot |
+| 4 | T12 backend hardening | fix/backend-hardening | – | DEV r2 | 4 commits + dirty TRUST_PROXY rate-limit fix (interrupted); continuation job T12-dev-r1b |
+| 5 | T9 frontend quality | test/frontend-quality | – | TODO | blocked on T11 merge |
+| 5 | T6a core docs | docs/core-docs | – | DEV r2 | docs/API.md partial (untracked); continuation job T6a-dev-r1b (jelly-fast-b) |
+| 5 | T6b ops docs + smoke test | docs/ops-docs | – | DEV r1 | redispatched fresh after reboot (worktree was untouched) |
+| 5 | T13 frontend fixes (Library/Settings) | fix/frontend-fixes | – | DEV r1 | new brief T13-frontend-fixes.md; redispatched after reboot |
 
 ## Decisions
 - 2026-11-21 T1 reworded to `feat(auth): add local login, sessions and auth middleware` (allowed: unpushed) and rebased on origin/main before review, per handover.
@@ -28,6 +30,8 @@ Product owner: opencode `orchestrator` agent. Update after every state change.
 - 2026-11-22 T10 round-1 MAJOR: `album` was an accepted PATCH field but the DB album row was never updated (track stayed bound to the old album). Product decision: fix properly — ensure target album (artist+name), repoint `album_id`, no file rename on album edits, `null` album → 400; regression tests added. Alternative (reject `album`) rejected because T11's UI must allow album edits.
 - 2026-11-22 T10 needed a rebase after T8 merged (both add guarded ALTERs to `migrate()` in db.go). Resolved keep-both (T8 users.status/settings first, then T10 track columns), force-with-lease, resolution re-reviewed (fresh/pre-T8/pre-T10 DB paths all verified idempotent).
 - 2026-11-22 T8 stricter-than-brief decisions accepted by reviewer: last-admin guard also blocks `pending` on the sole active admin; register 403s when `AUTH_LOCAL_ENABLED=false`.
+- 2026-11-22 **VM reboot** killed all 5 running jobs. Redispatch state: T11 dev work was already committed (4 commits, clean tree) → went straight to review (T11-review-r1); T12 had 4 commits plus a half-finished `TRUST_PROXY` rate-limit IP fix in two dirty files → continuation job T12-dev-r1b to finish it and continue the bug hunt; T6a had a partial untracked `docs/API.md` → continuation T6a-dev-r1b; T6b and T13 worktrees were untouched → fresh T6b-dev-r1 / T13-dev-r1.
+- 2026-11-22 New brief `docs/plan/tasks/T13-frontend-fixes.md` written from open BUGS.md frontend items (Library alert/confirm → ModalContext, artist refetch after scan, Settings limit NaN validation). Deliberately file-disjoint from in-flight T11 (T11 owns Metadata/metadata/, App.js, ModalContext, index.css, package.json; T13 owns Library.js, Settings.js).
 
 ## Ideas (out of scope, for later)
 - `.track-old` has no `word-break` (T2 reviewer note): a single very long unbroken word could push horizontal scroll at 360px — polish candidate for T9 or a follow-up.
