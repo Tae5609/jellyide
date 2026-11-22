@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { safeRedirectFrom } from '../auth/redirect';
 
 const Logo = () => (
   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -23,11 +24,7 @@ export default function Login() {
 
   // Only accept internal paths (single leading slash) as the redirect
   // target after login; anything else falls back to /downloads.
-  const from = location.state && location.state.from;
-  const redirectTo =
-    typeof from === 'string' && from.startsWith('/') && !from.startsWith('//')
-      ? from
-      : '/downloads';
+  const redirectTo = safeRedirectFrom(location.state && location.state.from);
 
   // Defensive: a session appearing while this page is mounted (e.g. after
   // a successful login render) sends the user to their target page.
