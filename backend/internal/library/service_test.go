@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -542,6 +543,9 @@ func TestDeleteAlbum(t *testing.T) {
 	if _, err := s.GetAlbum(albumID); err == nil {
 		t.Fatal("album still present after delete")
 	}
+	if err := s.DeleteAlbum(albumID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("DeleteAlbum missing album err = %v, want sql.ErrNoRows", err)
+	}
 	tracks, err := s.GetTracksByAlbum(albumID)
 	if err != nil {
 		t.Fatalf("GetTracksByAlbum: %v", err)
@@ -581,9 +585,10 @@ func TestDeleteTrack(t *testing.T) {
 		t.Fatalf("tracks = %d after delete, want 0", len(remaining))
 	}
 
-	// Deleting a missing track is a no-op without error.
-	if err := s.DeleteTrack("missing"); err != nil {
-		t.Fatalf("DeleteTrack missing: %v", err)
+	// Deleting a missing track reports sql.ErrNoRows (the API maps it to
+	// 404, matching the read endpoints).
+	if err := s.DeleteTrack("missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("DeleteTrack missing err = %v, want sql.ErrNoRows", err)
 	}
 }
 

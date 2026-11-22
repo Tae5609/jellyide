@@ -3,6 +3,7 @@
 package library
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -242,7 +243,8 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 }
 
 // DeleteAlbum removes the album and its tracks from the database (files on
-// disk are left in place).
+// disk are left in place). It returns sql.ErrNoRows when the album does not
+// exist, so the API can answer 404 like the read endpoints do.
 func (s *Service) DeleteAlbum(albumID string) error {
 	tx, err := s.db.Beginx()
 	if err != nil {
@@ -254,19 +256,43 @@ func (s *Service) DeleteAlbum(albumID string) error {
 		}
 		return err
 	}
-	if _, err = tx.Exec("DELETE FROM albums WHERE id = ?", albumID); err != nil {
+	res, err := tx.Exec("DELETE FROM albums WHERE id = ?", albumID)
+	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			log.Printf("Library: rollback delete album: %v", rbErr)
 		}
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	// No tracks can reference a missing album (FK), so a zero-row album
+	// delete means the album was absent from the start.
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // DeleteTrack removes one track from the database (the file stays on disk).
+// It returns sql.ErrNoRows when the track does not exist.
 func (s *Service) DeleteTrack(trackID string) error {
-	_, err := s.db.Exec("DELETE FROM tracks WHERE id = ?", trackID)
-	return err
+	res, err := s.db.Exec("DELETE FROM tracks WHERE id = ?", trackID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // SetAlbumCover stores the cover art URL for an album.

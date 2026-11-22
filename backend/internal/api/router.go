@@ -3,6 +3,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -335,6 +336,10 @@ func renameAlbum(lib *library.Service) http.HandlerFunc {
 		}
 		err := lib.RenameAlbum(id, req.Title)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				sendJSONError(w, "album not found", http.StatusNotFound)
+				return
+			}
 			if errors.Is(err, library.ErrAlbumExists) {
 				sendJSONError(w, err.Error(), http.StatusConflict)
 				return
@@ -352,6 +357,10 @@ func deleteAlbum(lib *library.Service) http.HandlerFunc {
 		id := vars["id"]
 		err := lib.DeleteAlbum(id)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				sendJSONError(w, "album not found", http.StatusNotFound)
+				return
+			}
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -365,6 +374,10 @@ func deleteTrack(lib *library.Service) http.HandlerFunc {
 		id := vars["id"]
 		err := lib.DeleteTrack(id)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				sendJSONError(w, "track not found", http.StatusNotFound)
+				return
+			}
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

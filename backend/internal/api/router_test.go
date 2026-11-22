@@ -529,6 +529,54 @@ func TestRenameAlbumCollision409(t *testing.T) {
 	}
 }
 
+// Regression: rename/delete of a missing album or track must answer 404
+// like the read endpoints (getAlbum/getTrack) do, not 500 (rename) or a
+// silent 200 (delete).
+func TestLibraryMutationsMissingResource(t *testing.T) {
+	h, _, _, _, _ := newTestRouter(t)
+
+	// Rename of a missing album: 404.
+	rec := postRaw(t, h, "/api/library/albums/does-not-exist/rename", `{"title": "New Name"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("rename missing album: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "album not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "album not found")
+	}
+
+	// Delete of a missing album: 404.
+	req := httptest.NewRequest(http.MethodDelete, "/api/library/albums/does-not-exist", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete missing album: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "album not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "album not found")
+	}
+
+	// Delete of a missing track: 404.
+	req = httptest.NewRequest(http.MethodDelete, "/api/library/tracks/does-not-exist", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete missing track: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "track not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "track not found")
+	}
+}
+
 func TestTriggerScanEmptyDir(t *testing.T) {
 	h, _, _, jm, _ := newTestRouter(t)
 
