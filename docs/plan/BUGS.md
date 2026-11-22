@@ -29,3 +29,9 @@ The product owner triages this list. Agents append bugs they find out of scope h
 - [ ] `backend/internal/db/db.go:196` — comment claims fresh databases already have the `status` column via CREATE TABLE, but the users CREATE TABLE has no status column, so the guarded ALTER also runs on fresh DBs (harmless, idempotent — reword the comment) (found in T8 review)
 - [ ] `backend/internal/auth/admin.go` — last-active-admin check is check-then-act, not transactional: two admins concurrently demoting/disabling each other could both pass the count check and leave zero active admins — re-check inside the write transaction (found in T8 review)
 - [ ] `backend/internal/auth/admin.go` / `handlers.go` register — the shared failure limiter records 409s but not validation rejections (short username/password floods bypass the 10/15min lockout) — record all failed register attempts (found in T8 review)
+
+## Priority (found by planner, 2026-11-22)
+- [ ] **DATA LOSS** `backend/internal/metadata/apply.go` (title rename) and `backend/internal/metadata/service.go` ApplyChanges: `os.Rename(track.Path, newPath)` with no existence check. On Linux `rename(2)` silently replaces an existing target, so renaming a track to a title that already exists in the album (or two titles that `sanitizeFilename` maps to the same name) **deletes the other audio file**. Same pattern in revert. → fixed by T17.
+- [ ] `backend/internal/library/service.go` RenameAlbum: renaming onto an existing *empty* directory silently succeeds, and onto a non-empty one fails with a raw error. There is no explicit collision handling. → T17.
+- [ ] Scanner never removes or marks rows for files that were deleted or moved outside JellyIDE: ghost rows, duplicates after external moves, and history attached to ghosts. → T16.
+- [ ] No conflict detection between DB, file tags and concurrent users: rescans silently overwrite JellyIDE edits, and concurrent edits are last-write-wins. → T16.

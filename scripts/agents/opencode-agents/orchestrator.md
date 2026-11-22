@@ -43,21 +43,21 @@ Do **not** use the `task` tool, because it blocks you until every task in the ba
 | T12 backend hardening | T12-backend-bughunt.md | fix/backend-hardening | – (dev finished; needs review) | jelly-reviewer-b next |
 | T6a core docs | T6-project-docs.md (part A) | docs/core-docs | – (start now) | jelly-fast-b |
 | T6b ops docs + smoke test | T6-project-docs.md (part B) | docs/ops-docs | – (start now) | jelly-dev-b |
+| **T17 URGENT no-overwrite rename (data loss)** | T17-no-overwrite-rename.md | fix/no-overwrite-rename | T12 (shares rename code). Dispatch the moment T12 merges, ahead of everything else | jelly-dev |
+| T16 sync conflict detection + resolution UI | T16-sync-conflicts.md | feat/sync-conflicts | T11, T17 | jelly-dev-b |
 | T14 download retry (manual + auto) | T14-download-retry.md | feat/download-retry | T12 | jelly-dev |
 | T15 yt-dlp updater (admin UI + auto-update) | T15-ytdlp-updater.md | feat/ytdlp-updater | T12, T13 (both touch shared files) | jelly-dev-b |
-| T9 frontend quality | T9-frontend-quality.md | test/frontend-quality | T11, T13, T14, T15 (Prettier reformat must run last) | jelly-dev-b |
+| T9 frontend quality | T9-frontend-quality.md | test/frontend-quality | T11, T13, T14, T15, T16 (Prettier reformat must run last) | jelly-dev-b |
 | Follow-ups T13+ | you write them from BUGS.md | fix/... | file-disjoint from in-flight work | any |
-| Docs refresh | – | docs/refresh | T6a, T6b, T9, T11, T12, T14, T15 all merged | jelly-fast-b: re-check that docs match the final code (shortcuts, env vars incl. DOWNLOAD_MAX_RETRIES and YTDLP_MANAGED, endpoints incl. retry and /api/admin/ytdlp) and fix drift |
+| Docs refresh | – | docs/refresh | T6a, T6b, T9, T11, T12, T14, T15, T16, T17 all merged | jelly-fast-b: re-check that docs match the final code (shortcuts, env vars incl. DOWNLOAD_MAX_RETRIES and YTDLP_MANAGED, endpoints incl. retry, /api/admin/ytdlp and /api/sync/*; document the sync conflict model in docs/METADATA.md) and fix drift |
 
 Already MERGED: T1, T2, T3, T4, T5, T7, T8, T10 (see STATUS.md).
 Worktrees: `/home/tae5609/jellyide-wt/<branch with / replaced by ->`.
 
-**State at this handover (planner restarted you):**
-- PRs #1–#17 merged, including T1–T5, T7, T8, T10 and the plan PRs. The T13 brief is in `docs/plan/tasks/`.
-- **T11** (`feat/metadata-editor-ui`): review r1 finished with **VERDICT: CHANGES** (an unreported result in `wait.sh`, read it there). Its dev commits were written by a fallback non-Orion model, so the next dev round (Orion) must fix the findings and re-verify the whole diff.
-- **T12** (`fix/backend-hardening`): every dev run so far fell back to a non-Orion model. The worktree has an outdated `.opencode/agents`. Commit any WIP, rebase on `origin/main`, then dispatch an Orion dev to finish the work and re-verify all existing commits.
-- **T13, T6a, T6b**: Orion workers are still running (detached). Do not redispatch them; wait for their reports.
-- **T14, T15**: new tasks (briefs merged in #17). Start them when their dependencies merge.
+**State at this handover (planner restarted you to add T16/T17):**
+- Running workers (detached) keep running: T11-dev-r2, T12-dev-r2 (lane A), T13-dev-r1, T6a-dev-r1b, T6b-dev-r1 (lane B). Do not redispatch them; collect their results with `wait.sh`. Check `status.sh` and the job logs to reconstruct each task's round.
+- New: T17 (urgent data-loss fix) and T16 (sync conflicts). Both briefs were merged in the planner's PR.
+- T11's next review must also check that the editor will be able to send `expected_version` later (T16 adds it). Nothing to build now.
 
 ## Per-task loop
 1. **Prepare**: in `/home/tae5609/jellyide`, run `git fetch origin && git checkout main && git pull --ff-only`. Create the worktree if missing: `git worktree add -b <branch> <path> origin/main`.
