@@ -61,6 +61,19 @@ func main() {
 		}
 	}
 
+	// SAML 2.0 service provider (optional). Built before route registration
+	// so its endpoints can be mounted below; a misconfigured SP is a fatal
+	// error rather than a half-armed login page.
+	samlCfg := auth.LoadSAMLConfig(downloadDir)
+	if samlCfg.Enabled {
+		if err := authSvc.EnableSAML(context.Background(), samlCfg); err != nil {
+			if cerr := database.Close(); cerr != nil {
+				log.Printf("Failed to close database: %v", cerr)
+			}
+			log.Fatal("Failed to enable SAML: ", err)
+		}
+	}
+
 	// Initialize Services
 	libService := library.NewService(database, downloadDir)
 	jobManager := jobs.NewManager(database)
@@ -74,6 +87,9 @@ func main() {
 	// API Router (Using Subrouter natively)
 	apiSub := r.PathPrefix("/api").Subrouter()
 	authSvc.RegisterRoutes(apiSub)
+	if samlCfg.Enabled {
+		authSvc.RegisterSAMLRoutes(apiSub)
+	}
 	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner)
 
 	// Serve media files
