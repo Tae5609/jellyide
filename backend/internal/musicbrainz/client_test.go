@@ -2,8 +2,10 @@ package musicbrainz
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -348,5 +350,83 @@ func TestParseNumberAndYear(t *testing.T) {
 func TestNormalizeTitle(t *testing.T) {
 	if got := NormalizeTitle("  The  GREAT song! "); got != "thegreatsong" {
 		t.Fatalf("NormalizeTitle = %q", got)
+	}
+}
+
+func TestCacheEvictsExpiredOnRead(t *testing.T) {
+	var hits atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The cached re-request never reaches the server, so the
+		// refetch after the TTL is the second hit.
+		if hits.Add(1) == 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"releases": []}`))
+	}))
+	defer server.Close()
+
+	client := newClient(server.URL+"/ws/2", 1000, 20*time.Millisecond)
+	if _, err := client.SearchReleases(context.Background(), "q"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if _, err := client.SearchReleases(context.Background(), "q"); err != nil {
+		t.Fatalf("cached: %v", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("hits = %d, want 1 (cache hit)", got)
+	}
+
+	// After the TTL the stale entry must be evicted on the next read.
+	time.Sleep(40 * time.Millisecond)
+	if _, err := client.SearchReleases(context.Background(), "q"); err == nil {
+		t.Fatal("want the 500 from the refetch")
+	}
+	client.mu.Lock()
+	cached := len(client.cache)
+	client.mu.Unlock()
+	if cached != 0 {
+		t.Fatalf("cache = %d entries, want 0 (expired entry evicted on read)", cached)
+	}
+}
+
+func TestCacheBoundedToMaxEntries(t *testing.T) {
+	var hits atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"releases": []}`))
+	}))
+	defer server.Close()
+
+	client := newClient(server.URL+"/ws/2", 1000, time.Minute)
+	last := maxCacheEntries + 9
+	for i := 0; i <= last; i++ {
+		if _, err := client.SearchReleases(context.Background(), fmt.Sprintf("q%d", i)); err != nil {
+			t.Fatalf("request %d: %v", i, err)
+		}
+	}
+
+	client.mu.Lock()
+	cached := len(client.cache)
+	_, oldestCached := client.cache[client.base+"/release?"+url.Values{"fmt": []string{"json"}, "limit": []string{"10"}, "query": []string{"q0"}}.Encode()]
+	client.mu.Unlock()
+	if cached != maxCacheEntries {
+		t.Fatalf("cache = %d entries, want the cap %d", cached, maxCacheEntries)
+	}
+	if oldestCached {
+		t.Fatal("oldest entry should have been evicted")
+	}
+
+	// The evicted entry is refetched; the newest one is still served
+	// from the cache.
+	if _, err := client.SearchReleases(context.Background(), "q0"); err != nil {
+		t.Fatalf("refetch: %v", err)
+	}
+	before := hits.Load()
+	if _, err := client.SearchReleases(context.Background(), fmt.Sprintf("q%d", last)); err != nil {
+		t.Fatalf("newest: %v", err)
+	}
+	if got := hits.Load(); got != before {
+		t.Fatalf("hits went %d -> %d, newest entry should be cached", before, got)
 	}
 }

@@ -1,6 +1,7 @@
 // Package musicbrainz is a small client for the MusicBrainz web service.
 // All requests share one rate limiter (1 request/second by default), use a
-// 10 second timeout, and responses are cached in memory for 10 minutes.
+// 10 second timeout, and responses are cached in memory for 10 minutes in a
+// bounded (256 entry) cache.
 package musicbrainz
 
 import (
@@ -28,6 +29,9 @@ const (
 	defaultCacheTTL      = 10 * time.Minute
 	defaultTimeout       = 10 * time.Second
 	maxResponseBytes     = 10 << 20
+	// maxCacheEntries caps the response cache; the oldest entry is dropped
+	// when the cap is reached (each entry can hold up to maxResponseBytes).
+	maxCacheEntries = 256
 )
 
 // Client talks to the MusicBrainz web service.
@@ -37,8 +41,9 @@ type Client struct {
 	limiter  *tokenBucket
 	cacheTTL time.Duration
 
-	mu    sync.Mutex
-	cache map[string]cacheEntry
+	mu         sync.Mutex
+	cache      map[string]cacheEntry
+	cacheOrder []string // FIFO insertion order, used to evict the oldest entry
 }
 
 type cacheEntry struct {
@@ -98,9 +103,14 @@ func (c *Client) do(ctx context.Context, pathAndQuery string) ([]byte, error) {
 	key := c.base + pathAndQuery
 
 	c.mu.Lock()
-	if entry, ok := c.cache[key]; ok && time.Now().Before(entry.expiresAt) {
-		c.mu.Unlock()
-		return entry.data, nil
+	if entry, ok := c.cache[key]; ok {
+		if time.Now().Before(entry.expiresAt) {
+			c.mu.Unlock()
+			return entry.data, nil
+		}
+		// Expired: evict on read so stale bytes never linger past the TTL.
+		delete(c.cache, key)
+		c.removeOrderKey(key)
 	}
 	c.mu.Unlock()
 
@@ -125,9 +135,40 @@ func (c *Client) do(ctx context.Context, pathAndQuery string) ([]byte, error) {
 	}
 
 	c.mu.Lock()
+	if _, exists := c.cache[key]; !exists {
+		if len(c.cache) >= maxCacheEntries {
+			c.evictOldest()
+		}
+		c.cacheOrder = append(c.cacheOrder, key)
+	}
 	c.cache[key] = cacheEntry{data: body, expiresAt: time.Now().Add(c.cacheTTL)}
 	c.mu.Unlock()
 	return body, nil
+}
+
+// evictOldest drops the oldest cached entry (FIFO). Callers hold c.mu.
+func (c *Client) evictOldest() {
+	for i, key := range c.cacheOrder {
+		if _, ok := c.cache[key]; ok {
+			delete(c.cache, key)
+			c.removeOrderKeyAt(i)
+			return
+		}
+	}
+}
+
+// removeOrderKey drops key from the FIFO order slice. Callers hold c.mu.
+func (c *Client) removeOrderKey(key string) {
+	for i, k := range c.cacheOrder {
+		if k == key {
+			c.removeOrderKeyAt(i)
+			return
+		}
+	}
+}
+
+func (c *Client) removeOrderKeyAt(i int) {
+	c.cacheOrder = append(c.cacheOrder[:i], c.cacheOrder[i+1:]...)
 }
 
 // ReleaseSearchResult is one row of the /metadata/lookup/search response.
