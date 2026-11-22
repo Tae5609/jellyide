@@ -90,6 +90,26 @@ describe('useShortcuts', () => {
     expect(handlers.onTab).toHaveBeenCalledWith(true);
   });
 
+  test('Enter is skipped while an interactive element holds focus', () => {
+    const handlers = makeHandlers();
+    renderHook(() => useShortcuts(handlers));
+
+    const button = document.createElement('button');
+    document.body.appendChild(button);
+    button.focus();
+    press({ key: 'Enter' });
+    expect(handlers.onEnter).not.toHaveBeenCalled();
+
+    // Tab stops (roving tabindex etc.) count too: Enter must stay with
+    // the focused element, not fire the grid shortcut on top of it.
+    const stop = document.createElement('div');
+    stop.tabIndex = 0;
+    document.body.appendChild(stop);
+    stop.focus();
+    press({ key: 'Enter' });
+    expect(handlers.onEnter).not.toHaveBeenCalled();
+  });
+
   test('Ctrl+S and Ctrl+Z prevent the browser default', () => {
     const handlers = makeHandlers();
     renderHook(() => useShortcuts(handlers));

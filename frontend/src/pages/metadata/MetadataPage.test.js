@@ -202,6 +202,29 @@ describe('MetadataPage shortcuts', () => {
     );
   });
 
+  test('Enter on a focused grid button does not open the cell editor', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('cell-t1-title');
+
+    // Give the grid a virtual cell focus, then make sure Enter still
+    // opens the editor while no interactive element holds the DOM focus.
+    await user.click(screen.getByTestId('cell-t1-title'));
+    await user.keyboard('{Escape}');
+    await user.keyboard('{Enter}');
+    expect(document.querySelector('.md-cell-input')).not.toBeNull();
+    await user.keyboard('{Escape}');
+
+    // Same cell focus, but the DOM focus is now on a button inside the
+    // grid card. Enter activates that button natively; it must not also
+    // open the cell editor on top of it (double-fire).
+    const autoButton = screen.getByRole('button', { name: /auto-number/i });
+    await user.click(autoButton);
+    expect(autoButton).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(document.querySelector('.md-cell-input')).toBeNull();
+  });
+
   test('hiding the focused column drops the cell focus', async () => {
     const user = userEvent.setup();
     const { container } = renderPage();

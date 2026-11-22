@@ -17,6 +17,9 @@ import { useEffect, useRef } from 'react';
 //  - Tab is intercepted only while a grid cell is focused (the
 //    `cellFocused` option); otherwise native tab order to the page
 //    controls stays intact (WCAG 2.1.2)
+//  - Enter is skipped while an interactive element (button, link, tab
+//    stop) holds DOM focus: Enter already activates it natively, and the
+//    shortcut must not double-fire on top of that
 export default function useShortcuts(
   handlers,
   { disabled = false, cellFocused = false } = {}
@@ -37,6 +40,23 @@ export default function useShortcuts(
             t.tagName === 'TEXTAREA' ||
             t.tagName === 'SELECT' ||
             t.isContentEditable)
+      );
+
+    // Enter activates a focused interactive element natively (buttons,
+    // links, tab stops). Used to keep onEnter from firing on top of that
+    // native activation. Inputs/textareas/selects never reach the Enter
+    // case (the isTyping guard above returns first).
+    const isInteractive = (t) =>
+      Boolean(
+        t &&
+          t.tagName &&
+          (t.tagName === 'BUTTON' ||
+            t.tagName === 'A' ||
+            t.tagName === 'INPUT' ||
+            t.tagName === 'TEXTAREA' ||
+            t.tagName === 'SELECT' ||
+            t.isContentEditable ||
+            t.tabIndex >= 0)
       );
 
     const onKeyDown = (e) => {
@@ -98,7 +118,10 @@ export default function useShortcuts(
           if (h.onArrowDown) h.onArrowDown();
           break;
         case 'Enter':
-          if (h.onEnter) h.onEnter();
+          // A focused button/link/tab stop activates natively on Enter;
+          // skip the shortcut so it does not double-fire (e.g. the grid's
+          // "Auto-number" button also opening the cell editor).
+          if (h.onEnter && !isInteractive(document.activeElement)) h.onEnter();
           break;
         case 'Tab':
           if (!cellFocused) break;
