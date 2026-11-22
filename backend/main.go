@@ -79,7 +79,11 @@ func main() {
 	jobManager := jobs.NewManager(database)
 	musicScanner := scanner.NewScanner(libService, jobManager, downloadDir)
 	downloader := download.NewDownloader(jobManager, musicScanner, downloadDir)
-	metaService := metadata.NewService(database, libService)
+	metaService := metadata.NewServiceWith(metadata.Deps{
+		DB:      database,
+		Library: libService,
+		Jobs:    jobManager,
+	})
 
 	// Main Router
 	r := mux.NewRouter()
