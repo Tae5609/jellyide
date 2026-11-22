@@ -476,6 +476,42 @@ func TestRenameAlbumRejectsExistingTarget(t *testing.T) {
 	}
 }
 
+// Regression: the track path is a DB value. When it points outside the
+// music dir, the rename must be refused instead of moving a directory
+// somewhere else on the filesystem.
+func TestRenameAlbumRejectsTrackOutsideMusicDir(t *testing.T) {
+	s, _ := newTestService(t)
+
+	artistID, err := s.EnsureArtist("Artist One")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "Old")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+
+	// A directory outside the music dir holding the "album" files.
+	victim := t.TempDir()
+	victimDir := filepath.Join(victim, "victim")
+	if err := os.MkdirAll(victimDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(victimDir, "Song.flac"), []byte("audio"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(victimDir, "Song.flac"), 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+
+	if err := s.RenameAlbum(albumID, "New"); err == nil {
+		t.Fatal("RenameAlbum should refuse a track path outside the music dir")
+	}
+	if _, err := os.Stat(victimDir); err != nil {
+		t.Fatalf("victim directory was renamed away: %v", err)
+	}
+}
+
 func TestAlbumDirRejectsEscape(t *testing.T) {
 	s, _ := newTestService(t)
 
