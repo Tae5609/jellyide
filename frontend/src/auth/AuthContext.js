@@ -17,7 +17,9 @@ const AuthContext = createContext(null);
 // - logout() POSTs /auth/logout and clears the local user.
 // - refresh() reloads providers and the current session.
 // - A global 'auth:unauthorized' event (raised by apiFetch on a 401)
-//   drops the session so the guards redirect to /login.
+//   revalidates the session via /auth/me and only drops it if that also
+//   401s: some endpoints answer 401 for other reasons while the session
+//   is still valid (e.g. /auth/password with a wrong current password).
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [providers, setProviders] = useState(null);
@@ -45,7 +47,18 @@ export function AuthProvider({ children }) {
   }, [refresh]);
 
   useEffect(() => {
-    const onUnauthorized = () => setUser(null);
+    const onUnauthorized = async () => {
+      // A 401 on a protected call does not prove the session is dead:
+      // /auth/password returns 401 for a wrong current password while the
+      // session is still valid. Revalidate before clearing; a network
+      // failure keeps the session (the next call retries the check).
+      try {
+        const res = await apiFetch('/auth/me');
+        if (res.status === 401) setUser(null);
+      } catch (err) {
+        // No revalidation possible; keep the session.
+      }
+    };
     window.addEventListener('auth:unauthorized', onUnauthorized);
     return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
   }, []);
