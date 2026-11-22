@@ -137,6 +137,12 @@ export default function MetadataPage() {
     }
   }, [visibleCols]);
 
+  // If the focused cell sits in a column the user just hid, drop the cell
+  // focus instead of pointing the shortcuts at an invisible cell.
+  useEffect(() => {
+    setFocus((prev) => (prev && !visibleCols.includes(prev.col) ? null : prev));
+  }, [visibleCols]);
+
   // Esc closes the topmost custom overlay (context modals handle their own).
   useEffect(() => {
     const onKey = (e) => {

@@ -86,6 +86,11 @@ describe('TrackGrid inline editing', () => {
 
     const input = screen.getByRole('textbox');
     expect(input).toHaveValue('One');
+
+    // The focused cell is visually marked (and shows the editor).
+    const td = input.closest('td');
+    expect(td).toHaveClass('focused');
+    expect(td).toHaveClass('editing');
   });
 
   test('Enter commits the typed value and exits edit mode', async () => {
@@ -100,6 +105,12 @@ describe('TrackGrid inline editing', () => {
 
     expect(onCommitEdit).toHaveBeenCalledWith('t1', 'title', 'One (Take)');
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+    // After the edit commits, the cell keeps the focus marker so the
+    // arrow/Enter/Tab shortcuts visibly keep targeting it.
+    const td = screen.getByTestId('cell-t1-title').closest('td');
+    expect(td).toHaveClass('focused');
+    expect(td).not.toHaveClass('editing');
   });
 
   test('Esc cancels the edit without committing', async () => {
@@ -129,6 +140,11 @@ describe('TrackGrid inline editing', () => {
     expect(onCommitEdit).toHaveBeenCalledWith('t1', 'title', 'One!');
     // The editor followed the focus to the genre cell with its value.
     await screen.findByDisplayValue('Rock');
+
+    // The focus marker moved with it (the genre cell edits, the title
+    // display div is back).
+    expect(screen.getByRole('textbox').closest('td')).toHaveClass('focused');
+    expect(screen.getByTestId('cell-t1-title').closest('td')).not.toHaveClass('focused');
   });
 
   test('Shift+Tab moves to the previous visible column', async () => {

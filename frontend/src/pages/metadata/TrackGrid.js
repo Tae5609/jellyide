@@ -307,14 +307,14 @@ export default function TrackGrid({
                   />
                 </td>
                 {cols.map((f) => {
-                  const isEditingCell =
-                    editing && isFocusedRow && focus.col === f.key;
+                  const isFocusedCell = isFocusedRow && focus.col === f.key;
+                  const isEditingCell = editing && isFocusedCell;
                   const value = currentValue(edits, track, f.key);
                   const dirty = `${track.id}.${f.key}` in edits;
                   return (
                     <td
                       key={f.key}
-                      className={`md-td ${isEditingCell ? 'editing' : ''}`}
+                      className={`md-td ${isEditingCell ? 'editing' : ''} ${isFocusedCell ? 'focused' : ''}`}
                       onClick={(e) => handleCellClick(e, idx, f.key)}
                     >
                       {isEditingCell ? (
