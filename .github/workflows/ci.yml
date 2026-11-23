@@ -96,11 +96,20 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test
+        run: npm run test:ci
+
       - name: Build
         run: npm run build
         env:
-          # react-scripts treats ESLint warnings as errors when CI=true
-          CI: false
+          # Warnings fail the build, matching the lint gate above.
+          CI: true
 
   docker:
     name: Docker image build
