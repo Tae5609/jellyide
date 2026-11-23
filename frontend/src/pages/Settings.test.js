@@ -384,3 +384,120 @@ describe('Settings admin controls and yt-dlp card', () => {
     await unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// T16: sync conflict policy card (admin only, self-contained)
+// ---------------------------------------------------------------------------
+
+function mockFetchAdmin(isAdmin, syncPolicy) {
+  return jest.fn(async (url, opts = {}) => {
+    if (url === '/api/auth/providers') {
+      return new Response(
+        JSON.stringify({
+          enabled: true,
+          local: true,
+          oidc: { enabled: false, name: '' },
+          saml: { enabled: false, name: '' },
+        }),
+        { status: 200 }
+      );
+    }
+    if (url === '/api/auth/me') {
+      return new Response(
+        JSON.stringify({
+          id: '1',
+          username: isAdmin ? 'root' : 'tester',
+          provider: 'local',
+          is_admin: isAdmin,
+        }),
+        { status: 200 }
+      );
+    }
+    if (url === '/api/config') {
+      if (opts.method === 'POST') {
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ concurrent_limit: 2, proxy: '' }),
+        { status: 200 }
+      );
+    }
+    if (url === '/api/admin/settings/sync') {
+      if (opts.method === 'PUT') {
+        return new Response(JSON.stringify({ policy: JSON.parse(opts.body).policy }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ policy: syncPolicy || 'ask' }), { status: 200 });
+    }
+    return new Response(null, { status: 500 });
+  });
+}
+
+async function renderSettingsWith(fetchImpl) {
+  global.fetch = fetchImpl;
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      <ModalProvider>
+        <AuthProvider>
+          <Settings />
+        </AuthProvider>
+      </ModalProvider>
+    );
+  });
+  return {
+    container,
+    unmount: () => act(async () => root.unmount()),
+  };
+}
+
+const syncPolicyCalls = (fetchMock) =>
+  fetchMock.mock.calls.filter(
+    ([url, opts]) => url === '/api/admin/settings/sync' && opts && opts.method === 'PUT'
+  );
+
+describe('Settings sync policy card', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('an admin can change the policy via PUT /admin/settings/sync', async () => {
+    const fetchImpl = mockFetchAdmin(true, 'ask');
+    const { container, unmount } = await renderSettingsWith(fetchImpl);
+
+    // The card is present for admins, with the loaded policy selected.
+    expect(container.textContent).toContain('Sync conflicts');
+    const fileWins = Array.from(container.querySelectorAll('input[name="sync_policy"]')).find(
+      (i) => i.value === 'file_wins'
+    );
+    expect(fileWins).toBeTruthy();
+
+    await act(async () => {
+      fileWins.click();
+    });
+    await act(async () => {
+      const save = Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Save Sync Policy'
+      );
+      save.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const calls = syncPolicyCalls(fetchImpl);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0][1].body)).toEqual({ policy: 'file_wins' });
+    expect(container.textContent).toContain('Sync policy updated.');
+    await unmount();
+  });
+
+  test('the card is hidden for non-admins', async () => {
+    const fetchImpl = mockFetchAdmin(false, 'ask');
+    const { container, unmount } = await renderSettingsWith(fetchImpl);
+
+    // Give the (absent) card a tick to appear, then assert it is not there.
+    await act(async () => {});
+    expect(container.textContent).not.toContain('Sync conflicts');
+    expect(syncPolicyCalls(fetchImpl)).toHaveLength(0);
+    await unmount();
+  });
+});

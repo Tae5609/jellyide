@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import TrackGrid from './TrackGrid';
 
 const tracks = [
@@ -51,28 +52,52 @@ function GridHarness(props) {
   );
 }
 
+// LocationProbe records the current route (for the sync chip navigation).
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
+}
+
 function renderGrid(overrides = {}) {
   const onCommitEdit = jest.fn(() => true);
   const utils = render(
-    <GridHarness
-      tracks={tracks}
-      edits={overrides.edits || {}}
-      selected={overrides.selected || {}}
-      visibleCols={overrides.visibleCols || ['track_number', 'title', 'genre']}
-      onCommitEdit={onCommitEdit}
-      onToggleCol={jest.fn()}
-      onSelectToggle={jest.fn()}
-      onSelectRange={jest.fn()}
-      onSelectAll={jest.fn()}
-      onClearSelection={jest.fn()}
-      onFillDown={jest.fn()}
-      onAutoNumber={jest.fn()}
-      onUndo={jest.fn()}
-      onRedo={jest.fn()}
-      onDeleteTrack={jest.fn()}
-      onSaveCard={jest.fn(() => true)}
-      onError={jest.fn()}
-    />
+    <MemoryRouter initialEntries={['/grid']}>
+      <Routes>
+        <Route
+          path="/grid"
+          element={
+            <GridHarness
+              tracks={overrides.tracks || tracks}
+              edits={overrides.edits || {}}
+              selected={overrides.selected || {}}
+              visibleCols={overrides.visibleCols || ['track_number', 'title', 'genre']}
+              onCommitEdit={onCommitEdit}
+              onToggleCol={jest.fn()}
+              onSelectToggle={jest.fn()}
+              onSelectRange={jest.fn()}
+              onSelectAll={jest.fn()}
+              onClearSelection={jest.fn()}
+              onFillDown={jest.fn()}
+              onAutoNumber={jest.fn()}
+              onUndo={jest.fn()}
+              onRedo={jest.fn()}
+              onDeleteTrack={jest.fn()}
+              onSaveCard={jest.fn(() => true)}
+              onError={jest.fn()}
+            />
+          }
+        />
+        <Route
+          path="/sync"
+          element={
+            <>
+              <LocationProbe />
+              <div>sync page</div>
+            </>
+          }
+        />
+      </Routes>
+    </MemoryRouter>
   );
   return { onCommitEdit, ...utils };
 }
@@ -190,5 +215,37 @@ describe('TrackGrid inline editing', () => {
     // Row gets the dirty marker.
     const dirtyRow = container.querySelector('.md-row.dirty');
     expect(dirtyRow).not.toBeNull();
+  });
+});
+
+describe('TrackGrid sync chips', () => {
+  test('a conflict row shows a chip that navigates to /sync', async () => {
+    const user = userEvent.setup();
+    renderGrid({
+      tracks: [
+        { ...tracks[0], state: 'conflict' },
+        { ...tracks[1] },
+      ],
+    });
+
+    // The table and the mobile cards both render (CSS hides one), so the
+    // chip appears twice.
+    const chips = screen.getAllByRole('button', { name: /^⚠ conflict$/i });
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveTextContent('⚠ Conflict');
+    expect(screen.queryAllByRole('button', { name: /^missing$/i })).toHaveLength(0);
+
+    await user.click(chips[0]);
+    expect(screen.getByTestId('location')).toHaveTextContent('/sync');
+    expect(screen.getByText('sync page')).toBeInTheDocument();
+  });
+
+  test('a missing row shows a Missing chip', async () => {
+    renderGrid({
+      tracks: [{ ...tracks[0], state: 'missing' }],
+    });
+    const chips = screen.getAllByRole('button', { name: /^missing$/i });
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveTextContent('Missing');
   });
 });

@@ -22,7 +22,31 @@ import FindReplacePanel from './FindReplacePanel';
 import CoverArtPanel from './CoverArtPanel';
 import LookupDialog from './LookupDialog';
 import HistoryDrawer from './HistoryDrawer';
+import VersionConflictDialog from './VersionConflictDialog';
 import useShortcuts from './useShortcuts';
+
+// collectFlagged pulls the per-track conflict entries out of a finished
+// apply job's details (version_conflict = the optimistic lock fired at run
+// time; external_change = the file moved under us during the apply).
+function collectFlagged(job) {
+  const version = [];
+  const external = [];
+  let details = job && job.details;
+  if (typeof details === 'string') {
+    try {
+      details = JSON.parse(details);
+    } catch (e) {
+      details = null;
+    }
+  }
+  const results = (details && details.results) || [];
+  results.forEach((r) => {
+    if (!r || !r.track_id) return;
+    if (r.reason === 'version_conflict') version.push(r);
+    else if (r.reason === 'external_change') external.push(r);
+  });
+  return { version, external };
+}
 
 const COLS_STORAGE_KEY = 'jellyide.metadata.columns.v1';
 const ALL_COLS = FIELDS.map((f) => f.key);
@@ -91,6 +115,12 @@ export default function MetadataPage() {
   const [coverKey, setCoverKey] = useState(0);
   const [lookupCoverUrl, setLookupCoverUrl] = useState('');
   const [coverBusy, setCoverBusy] = useState(false);
+
+  // T16: version-lock conflicts (409 or job results) and rename collisions
+  // (per-track suffix / skip / replace chosen in the review step).
+  const [conflictInfo, setConflictInfo] = useState(null); // {conflicts, edits}
+  const [collisionReports, setCollisionReports] = useState([]);
+  const [collisionChoices, setCollisionChoices] = useState({});
 
   const cols = FIELDS.filter((f) => visibleCols.includes(f.key));
   const pc = pendingCount(state);
@@ -164,7 +194,8 @@ export default function MetadataPage() {
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape' || modalOpen) return;
-      if (reviewOpen) setReviewOpen(false);
+      if (conflictInfo) setConflictInfo(null);
+      else if (reviewOpen) setReviewOpen(false);
       else if (helpOpen) setHelpOpen(false);
       else if (lookupOpen) setLookupOpen(false);
       else if (historyOpen) setHistoryOpen(false);
@@ -172,7 +203,7 @@ export default function MetadataPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [reviewOpen, helpOpen, lookupOpen, historyOpen, mobilePanel, modalOpen]);
+  }, [reviewOpen, helpOpen, lookupOpen, historyOpen, mobilePanel, modalOpen, conflictInfo]);
 
   // ---- album actions -------------------------------------------------------
 
@@ -347,11 +378,43 @@ export default function MetadataPage() {
   // ---- review & apply ------------------------------------------------------
 
   const openReview = () => {
-    if (pc > 0) setReviewOpen(true);
+    if (pc === 0) return;
+    setReviewOpen(true);
+    setCollisionReports([]);
+    setCollisionChoices({});
+    // When a pending edit renames a file onto an existing name, ask the
+    // backend which renames collide so the review can offer suffix / skip /
+    // replace per track. A failed preview must not block applying.
+    const patchEdits = buildPatchEdits(state);
+    if (!patchEdits.some((e) => e.fields.title !== undefined)) return;
+    apiFetch('/metadata/rename-collisions', {
+      method: 'POST',
+      body: JSON.stringify({ edits: patchEdits }),
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((reports) => {
+        const colliding = (reports || []).filter((r) => r.collides);
+        if (colliding.length === 0) return;
+        setCollisionReports(colliding);
+        const choices = {};
+        colliding.forEach((r) => {
+          choices[r.track_id] = 'suffix';
+        });
+        setCollisionChoices(choices);
+      })
+      .catch(() => {});
   };
 
-  const applyChanges = async () => {
-    const patchEdits = buildPatchEdits(state);
+  const titleOf = (trackId) => {
+    const t = state.tracks.find((tr) => tr.id === trackId);
+    return (t && t.title) || trackId;
+  };
+
+  // applyEdits sends one PATCH batch and handles the T16 outcomes: 409
+  // (every track stale -> the conflict dialog), per-track version_conflict
+  // job results (the dialog) and external_change job results (an alert;
+  // the divergences live on the Conflicts page).
+  const applyEdits = async (patchEdits) => {
     if (patchEdits.length === 0) return;
     setApplying(true);
     try {
@@ -359,18 +422,64 @@ export default function MetadataPage() {
         method: 'PATCH',
         body: JSON.stringify({ edits: patchEdits }),
       });
+      if (res.status === 409) {
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (e) {
+          // non-JSON 409 body; fall through to the generic error
+        }
+        if (data && Array.isArray(data.conflicts) && data.conflicts.length > 0) {
+          setConflictInfo({ conflicts: data.conflicts, edits: patchEdits });
+          return;
+        }
+        throw new Error(
+          data && data.error ? data.error : await errorFromResponse(res)
+        );
+      }
       if (!res.ok) throw new Error(await errorFromResponse(res));
       const { job_id } = await res.json();
-      await waitForJob(job_id);
+      const job = await waitForJob(job_id);
+      const flagged = collectFlagged(job);
+      if (flagged.version.length > 0) {
+        setConflictInfo({ conflicts: flagged.version, edits: patchEdits });
+        return;
+      }
+      // One alert: a second showAlert would replace the first (the modal
+      // state is singular), so the external-change note is merged in.
+      let note = 'Changes applied successfully.';
+      if (flagged.external.length > 0) {
+        const names = flagged.external.map((e) => titleOf(e.track_id)).join(', ');
+        note += ` Skipped (changed on disk during apply): ${names} — see the Conflicts page.`;
+      }
       dispatch({ type: 'APPLIED' });
       setReviewOpen(false);
       await refreshData();
-      showAlert('Success', 'Changes applied successfully.');
+      showAlert('Success', note);
     } catch (e) {
       showAlert('Error', e.message);
     } finally {
       setApplying(false);
     }
+  };
+
+  const applyChanges = () => {
+    const patchEdits = buildPatchEdits(state, collisionChoices);
+    applyEdits(patchEdits);
+  };
+
+  // The conflict dialog's onResolve: re-apply the adjusted edits (or finish
+  // when everything was kept as "theirs").
+  const handleConflictResolve = (edits) => {
+    setConflictInfo(null);
+    if (edits.length === 0) {
+      dispatch({ type: 'APPLIED' });
+      setReviewOpen(false);
+      refreshData();
+      showAlert('Done', 'Kept the current values; the conflicting edits were dropped.');
+      return;
+    }
+    applyEdits(edits);
   };
 
   // ---- lookup & cover ------------------------------------------------------
@@ -443,6 +552,7 @@ export default function MetadataPage() {
         historyOpen ||
         helpOpen ||
         Boolean(mobilePanel) ||
+        Boolean(conflictInfo) ||
         modalOpen,
       // Capture Tab (cell navigation) only while a cell is focused and not
       // being edited; otherwise native tab order reaches the page controls.
@@ -742,6 +852,33 @@ export default function MetadataPage() {
                           </tr>
                         );
                       })}
+                      {collisionReports.map((r) => (
+                        <tr key={`collision-${r.track_id}`} className="review-collision-row">
+                          <td>{titleOf(r.track_id)}</td>
+                          <td>File name clash</td>
+                          <td className="review-old" colSpan={2}>
+                            {r.existing_name || r.target_path}
+                          </td>
+                          <td>
+                            <select
+                              className="settings-input collision-select"
+                              value={collisionChoices[r.track_id] || 'suffix'}
+                              onChange={(e) =>
+                                setCollisionChoices((prev) => ({
+                                  ...prev,
+                                  [r.track_id]: e.target.value,
+                                }))
+                              }
+                              disabled={applying}
+                              aria-label={`Rename collision for ${titleOf(r.track_id)}`}
+                            >
+                              <option value="suffix">Add a number (file keeps a copy name)</option>
+                              <option value="skip">Skip the rename (keep the file name)</option>
+                              <option value="replace">Replace the file (old one goes to trash)</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -769,6 +906,17 @@ export default function MetadataPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {conflictInfo && (
+        <VersionConflictDialog
+          conflicts={conflictInfo.conflicts}
+          edits={conflictInfo.edits}
+          tracks={state.tracks}
+          busy={applying}
+          onResolve={handleConflictResolve}
+          onClose={() => setConflictInfo(null)}
+        />
       )}
 
       {lookupOpen && (
