@@ -429,8 +429,9 @@ grants admin rights, e.g. `SAML_ADMIN_GROUP=jellyide-admins`.
   becomes `pending` or `disabled` loses all sessions immediately and
   cannot log in again until re-activated.
 - **Rate limiting:** 10 failed logins/registrations per IP per 15
-  minutes, then `429`; validation rejections (bad username/password
-  shape) feed the limiter too. The key is the direct peer address, or
+  minutes, then `429` (wrong credentials and register validation
+  rejections — invalid username or short password — feed the limiter
+  too). The key is the direct peer address, or
   the first `X-Forwarded-For` hop when `TRUST_PROXY=true` — only set
   that behind a proxy that overwrites the header. The first-run setup
   endpoint runs a stricter limiter (5 failures per IP per 15 minutes).

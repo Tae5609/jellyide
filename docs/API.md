@@ -881,8 +881,9 @@ table).
   bookkeeping of download jobs: a transient failure (network errors, HTTP 5xx/429) with
   retry budget left is set back to `queued` with `next_retry_at` armed
   (backoff 30 s / 2 min / 10 min, capped at 10 min; the budget is
-  `DOWNLOAD_MAX_RETRIES`, default 2, `0` disables it) — permanent failures (HTTP 403/404,
-  unavailable or private videos) are never retried.
+   `DOWNLOAD_MAX_RETRIES`, default 2, `0` disables it) — permanent failures (HTTP 403/404,
+   unavailable, private, members-only or copyrighted videos, and anything unrecognised)
+   are never retried.
 
 ### POST /api/jobs/clear
 
@@ -896,7 +897,7 @@ Manually re-queues one failed **download** job; the dispatcher runs it immediate
 job's `attempts` counter is advanced, so a manual retry counts against the
 automatic-retry budget (`DOWNLOAD_MAX_RETRIES`).
 
-- Response `200` — the [job](#get-api-jobs) object.
+- Response `200` — the [job](#get-apijobs) object.
 - Errors: `404 {"error":"job not found"}` · `409 {"error":"job is not a failed download"}` ·
   `500`.
 
@@ -1090,7 +1091,7 @@ Admin. Changes the policy (the settings-table value wins over the
 - Request: `{ "policy": "file_wins" }` — `ask` (default) | `file_wins` | `db_wins`.
 - Response `200`: `{ "policy": "file_wins" }`
 - Errors: `400` `invalid policy "…" (want ask, file_wins or db_wins)` ·
-  `403 {"error":"admin access required"}`.
+  `403 {"error":"admin required"}`.
 
 ---
 

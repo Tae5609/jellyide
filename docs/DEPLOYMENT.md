@@ -78,8 +78,10 @@ in the container environment).
 Every variable the server reads, with its default from the code
 (`backend/internal/auth/config.go`, `backend/internal/auth/oidc.go`,
 `backend/internal/auth/saml.go`, `backend/internal/download/downloader.go`,
+`backend/internal/library/sync.go`, `backend/internal/ytdlp/manager.go`,
 `backend/main.go`). Boolean variables
-accept `1/true/yes/on` and `0/false/no/off`.
+accept `1/true/yes/on` and `0/false/no/off` (`YTDLP_MANAGED` treats
+anything that is not an explicit `0/false/no/off` as on).
 
 | Variable | Default | Description |
 |---|---|---|
@@ -115,7 +117,7 @@ accept `1/true/yes/on` and `0/false/no/off`.
 | `SAML_ADMIN_GROUP` | — (none) | Users whose group list contains this group become admins. |
 | `SAML_AUTO_CREATE` | `true` | Create a local account on first login. `false` = only pre-provisioned users may log in. |
 | `CONCURRENT_DOWNLOAD` | `2` | Read at startup as the initial download concurrency limit: a missing, invalid or below-1 value falls back to the default of 2, and a value above 32 is clamped to 32. Can still be changed at runtime on the Settings page. |
-| `DOWNLOAD_MAX_RETRIES` | `2` | How often a transient download failure is retried automatically, with a 30 s / 2 min / 10 min backoff (capped at 10 min). Permanent failures (HTTP 403/404, unavailable or private videos) are never retried; `0` disables the automatic retry. Empty or invalid values fall back to the default. |
+| `DOWNLOAD_MAX_RETRIES` | `2` | How often a transient download failure is retried automatically, with a 30 s / 2 min / 10 min backoff (capped at 10 min). Permanent failures (HTTP 403/404, unavailable, private, members-only or copyrighted videos) are never retried; `0` disables the automatic retry. Empty or invalid values fall back to the default. |
 | `YTDLP_MANAGED` | `true` | Use the JellyIDE-managed yt-dlp binary: it is installed on first start under `<DOWNLOAD_DIR>/.jellyide/bin` and auto-updated on an interval (Settings page). Anything that is not an explicit `0/false/no/off` keeps managed mode on; `YTDLP_MANAGED=false` uses the system `yt-dlp` on the `PATH` and never updates. |
 | `SYNC_CONFLICT_POLICY` | `ask` | Initial policy for a scan that finds the file's tags differ from the database: `ask` (record a conflict and wait for a user decision), `file_wins` (the file overwrites the database) or `db_wins` (the file tags are rewritten from the database). Seeded into the database once at first start; afterwards the value set on the Settings page wins over this variable. |
 
