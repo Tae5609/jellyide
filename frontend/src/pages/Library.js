@@ -53,10 +53,15 @@ export default function Library() {
     scanBaselineRef.current = null;
   };
 
+  // Newest scan job wins on created_at; ties break on id so the result
+  // is a total order that does not depend on the array order of the
+  // /jobs response, which is not guaranteed stable across polls.
   const newestScanJob = (scanJobs) =>
-    scanJobs.reduce((a, b) =>
-      new Date(a.created_at) >= new Date(b.created_at) ? a : b
-    );
+    scanJobs.reduce((a, b) => {
+      const ta = new Date(a.created_at).getTime();
+      const tb = new Date(b.created_at).getTime();
+      return ta > tb || (ta === tb && a.id >= b.id) ? a : b;
+    });
 
   // True once the scan started by triggerScan reaches a terminal state.
   // The baseline (captured right after the scan starts) records the job
