@@ -149,11 +149,14 @@ func (l *loginLimiter) pruneLocked(ip string, now time.Time) []time.Time {
 	return recent
 }
 
+// dummyPassword is the fixed plaintext the dummy hash is derived from.
+const dummyPassword = "timing-equalizer-dummy-password"
+
 // dummyHash equalizes bcrypt timing for unknown users.
 var dummyHash string
 
 func init() {
-	if h, err := HashPassword("timing-equalizer-dummy-password"); err == nil {
+	if h, err := HashPassword(dummyPassword); err == nil {
 		dummyHash = h
 	}
 }
