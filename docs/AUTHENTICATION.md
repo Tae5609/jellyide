@@ -143,7 +143,10 @@ demoted, disabled or deleted.
 ## Registration
 
 Self sign-up is `POST /api/auth/register` (public) and is gated by the
-registration mode.
+registration mode. Like login, the body must carry the
+[login-CSRF token](#session-cookie-and-csrf-security-model)
+(`GET /api/auth/csrf` first); in `admin_only` mode the
+`403 registration is disabled` answer comes before the token is checked.
 
 ### Modes
 
@@ -400,19 +403,37 @@ grants admin rights, e.g. `SAML_ADMIN_GROUP=jellyide-admins`.
 - **Session cookie** `jellyide_session`: `HttpOnly`, `SameSite=Lax`,
   `Path=/`, `Secure` when `COOKIE_SECURE=true`.
 - **Authentication check:** every request to `/api/*` (except the public
-  `/api/auth/*` paths: login, register, providers, and the whole OIDC
-  and SAML flows) and `/media/*` needs a valid session, else `401`.
+  paths: `/api/auth/*` — login, register, providers, the CSRF token
+  endpoint and the whole OIDC and SAML flows — and the `/api/setup/*`
+  wizard endpoints) and `/media/*` needs a valid session, else `401`.
+  While first-run setup is pending, the setup gate answers
+  `503 {"error":"setup_required"}` for all of them instead (except
+  `/api/auth/providers` and `/api/setup/*`).
 - **CSRF protection:** the SPA sends `X-Requested-With: XMLHttpRequest`
   on every request; the middleware requires that header on all
   state-changing requests (POST/PUT/PATCH/DELETE) to protected paths and
   answers `403 {"error":"csrf"}` without it. Public auth endpoints are
-  exempt because they need to work without a session.
+  exempt because they need to work without a session — but login and
+  register are protected by the double-submit token below.
+- **Login CSRF (double submit):** `GET /api/auth/csrf` returns a random
+  token in the body **and** in the `jellyide_login_csrf` cookie
+  (`HttpOnly`, `SameSite=Lax`, 1-hour expiry, `Secure` when
+  `COOKIE_SECURE=true`). `POST /api/auth/login` and
+  `POST /api/auth/register` must carry the token in the body
+  (`csrf_token`); a missing or mismatching token answers
+  `403 {"error":"login csrf mismatch"}`. A cross-site page can read
+  neither half of the pair, so a forged login POST — which would pin the
+  victim's browser onto the attacker's account, or in `open` mode create
+  an attacker-controlled account for it — gets refused.
 - **Status enforcement:** only `active` users hold sessions. A user who
   becomes `pending` or `disabled` loses all sessions immediately and
   cannot log in again until re-activated.
 - **Rate limiting:** 10 failed logins/registrations per IP per 15
-  minutes, then `429`. (Behind a reverse proxy the key is the proxy IP —
-  see [docs/plan/BUGS.md](./plan/BUGS.md).)
+  minutes, then `429`; validation rejections (bad username/password
+  shape) feed the limiter too. The key is the direct peer address, or
+  the first `X-Forwarded-For` hop when `TRUST_PROXY=true` — only set
+  that behind a proxy that overwrites the header. The first-run setup
+  endpoint runs a stricter limiter (5 failures per IP per 15 minutes).
 - OIDC additionally uses `state` (bound to the browser via a 10-minute
   HttpOnly cookie), PKCE and a verified nonce; SAML relies on the
   library's signature validation and refuses unsolicited responses.
