@@ -367,10 +367,12 @@ func TestDetectCover(t *testing.T) {
 	}
 }
 
-// TestScanSkipsJellyideDir verifies that files inside the .jellyide directory
-// (such as the managed yt-dlp binary) are skipped during scanning.
+// TestScanSkipsJellyideDir verifies that files inside the .jellyide
+// directory (such as the managed yt-dlp binary) are skipped during
+// scanning. A fake ffprobe on PATH makes the indexing deterministic:
+// without the skip, the audio file inside .jellyide would be indexed.
 func TestScanSkipsJellyideDir(t *testing.T) {
-	s, jm, _, dir := newTestScanner(t)
+	s, jm, lib, dir := newTestScanner(t)
 
 	jellyDir := filepath.Join(dir, ".jellyide", "bin")
 	if err := os.MkdirAll(jellyDir, 0o700); err != nil {
@@ -379,6 +381,18 @@ func TestScanSkipsJellyideDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(jellyDir, "yt-dlp"), []byte("bin"), 0o600); err != nil {
 		t.Fatalf("write yt-dlp: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(jellyDir, "cache.flac"), []byte("fake audio"), 0o600); err != nil {
+		t.Fatalf("write cache.flac: %v", err)
+	}
+
+	// A fake ffprobe that always succeeds, so processFile indexes every
+	// supported file the walk reaches (no machine ffprobe dependency).
+	fakeDir := t.TempDir()
+	fake := "#!/bin/sh\necho '{\"format\":{\"duration\":\"1\",\"bit_rate\":\"128000\"}}'\n"
+	if err := os.WriteFile(filepath.Join(fakeDir, "ffprobe"), []byte(fake), 0o700); err != nil { //nolint:gosec // G306 - the fake ffprobe must be executable
+		t.Fatalf("write fake ffprobe: %v", err)
+	}
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	if err := s.Scan(); err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -391,4 +405,12 @@ func TestScanSkipsJellyideDir(t *testing.T) {
 		t.Fatalf("jobs = %d, want 1", len(all))
 	}
 	waitForJobStatus(t, jm, all[0].ID, jobs.StatusCompleted)
+
+	artists, err := lib.GetArtists()
+	if err != nil {
+		t.Fatalf("GetArtists: %v", err)
+	}
+	if len(artists) != 0 {
+		t.Fatalf("artists = %+v, want none (.jellyide must be skipped)", artists)
+	}
 }
