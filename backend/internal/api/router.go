@@ -459,14 +459,27 @@ func applyMetadata(meta *metadata.Service) http.HandlerFunc {
 }
 
 // writeMetadataError maps the metadata service's typed errors to the API
-// contract: 400 {"error","field","track_id"}, 404, 409 and 500 otherwise.
+// contract: 400 {"error","field","track_id"}, 404, 409 (including the
+// all-tracks-conflicted version lock, which carries the per-track
+// details) and 500 otherwise.
 func writeMetadataError(w http.ResponseWriter, err error) {
 	var (
-		valErr   *metadata.ValidationError
-		notFound *metadata.NotFoundError
-		conflict *metadata.ConflictError
+		valErr          *metadata.ValidationError
+		notFound        *metadata.NotFoundError
+		conflict        *metadata.ConflictError
+		versionConflict *metadata.VersionConflictError
 	)
 	switch {
+	case errors.As(err, &versionConflict):
+		body := map[string]interface{}{
+			"error":     versionConflict.Error(),
+			"conflicts": versionConflict.Conflicts,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		if jsonErr := json.NewEncoder(w).Encode(body); jsonErr != nil {
+			log.Printf("api: writing error response: %v", jsonErr)
+		}
 	case errors.As(err, &valErr):
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

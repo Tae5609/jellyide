@@ -24,12 +24,14 @@ type renameResult struct {
 	FinalFilename   string `json:"final_filename"`
 }
 
-// applyOutcome is the rename outcome of one applied edit: the note for
-// the job's progress text and the per-track result when a suffix was
-// applied (both empty when no rename happened or none was suffixed).
+// applyOutcome is the outcome of one applied edit: the note for the
+// job's progress text, the per-track rename result (auto-numbered or
+// replaced name) and an additional per-track result entry for skipped
+// work (version conflict, external change, skipped rename, T16).
 type applyOutcome struct {
 	note   string
 	rename *renameResult
+	result map[string]interface{}
 }
 
 // renameFileNoOverwrite renames the track file from trackPath to
@@ -63,11 +65,12 @@ func renameNote(filename string) string {
 	return fmt.Sprintf("renamed to %q (name taken)", filename)
 }
 
-// appendJobResults merges the per-track rename results into the job's
-// details JSON so the UI can read them from the finished job. The jobs
-// package is not part of this change, so the merge reads through the
-// jobs manager and writes through the shared database handle.
-func (s *Service) appendJobResults(jobID string, results []renameResult) {
+// appendJobResults merges the per-track results (rename outcomes and
+// skip entries) into the job's details JSON so the UI can read them from
+// the finished job. The jobs package is not part of this change, so the
+// merge reads through the jobs manager and writes through the shared
+// database handle.
+func (s *Service) appendJobResults(jobID string, results []interface{}) {
 	job, err := s.jm.GetJob(jobID)
 	if err != nil {
 		log.Printf("metadata: read job %s for results: %v", jobID, err)

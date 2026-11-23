@@ -12,11 +12,16 @@ import (
 	"yt-scraper/internal/library"
 )
 
-// stubTagWriter records calls instead of invoking Python.
+// stubTagWriter records calls instead of invoking Python. readByPath
+// configures the apply-time re-read: a missing path returns an error,
+// which the service treats as "cannot verify" and proceeds (the tag
+// write would fail on an unreadable file anyway).
 type stubTagWriter struct {
 	mu            sync.Mutex
 	writeErr      error
+	readErr       error
 	embedErr      error
+	readByPath    map[string]map[string]interface{}
 	extractByPath map[string][]byte // path -> embedded cover bytes; missing = none
 
 	writeCalls []stubWriteCall
@@ -26,6 +31,33 @@ type stubTagWriter struct {
 type stubWriteCall struct {
 	Path   string
 	Fields map[string]interface{}
+}
+
+// setReadTags configures what ReadFields returns for path.
+func (s *stubTagWriter) setReadTags(path string, fields map[string]interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readByPath == nil {
+		s.readByPath = map[string]map[string]interface{}{}
+	}
+	s.readByPath[path] = fields
+}
+
+func (s *stubTagWriter) ReadFields(path string) (map[string]interface{}, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	fields, ok := s.readByPath[path]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	copied := make(map[string]interface{}, len(fields))
+	for k, v := range fields {
+		copied[k] = v
+	}
+	return copied, nil
 }
 
 func (s *stubTagWriter) WriteFields(path string, fields map[string]interface{}) error {
