@@ -137,17 +137,35 @@ check_eq "unauthenticated GET /api/jobs is 401" 401 "$code"
 code=$(http_code GET /api/auth/providers)
 check_eq "GET /api/auth/providers is 200" 200 "$code"
 
+# Login-CSRF handshake, mirroring frontend/src/auth/AuthContext.js login().
+# POST /api/auth/login is double-submit protected (handlers.go
+# handleLoginCSRF + verifyLoginCSRF): the public GET below answers
+# {"token":"..."} and mirrors the same value into the jellyide_login_csrf
+# cookie, and the login POST only passes when its csrf_token body field
+# equals that cookie. The token is random per request but the check is a
+# stateless cookie-vs-body comparison that stays valid until
+# loginCSRFMaxAge, so one fetch serves both login attempts below as long as
+# the cookie jar it fills is replayed with each POST.
+CSRF_TOKEN="$(curl -s --max-time 10 -c "$COOKIE_JAR" "${BASE}/api/auth/csrf" \
+  | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+if [ -z "$CSRF_TOKEN" ]; then
+  echo "FAIL: login-CSRF handshake: GET /api/auth/csrf returned no token; log follows"
+  cat "$SERVER_LOG"
+  exit 1
+fi
+
 # 3. A bad login is rejected.
 code=$(http_code POST /api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"wrong-password"}')
+  -b "$COOKIE_JAR" \
+  -d "{\"username\":\"admin\",\"password\":\"wrong-password\",\"csrf_token\":\"$CSRF_TOKEN\"}")
 check_eq "login with a wrong password is 401" 401 "$code"
 
 # 4. A good login succeeds and fills the cookie jar.
-code=$(curl -s -c "$COOKIE_JAR" -o "$BODY_FILE" -w '%{http_code}' \
+code=$(curl -s -b "$COOKIE_JAR" -c "$COOKIE_JAR" -o "$BODY_FILE" -w '%{http_code}' \
   -X POST -H 'Content-Type: application/json' \
   -H 'X-Requested-With: XMLHttpRequest' --max-time 10 \
-  -d '{"username":"admin","password":"smoke-pass-123"}' \
+  -d "{\"username\":\"admin\",\"password\":\"smoke-pass-123\",\"csrf_token\":\"$CSRF_TOKEN\"}" \
   "${BASE}/api/auth/login")
 check_eq "login with the correct password is 200" 200 "$code"
 if [ -f "$COOKIE_JAR" ] && grep -q 'jellyide_session' "$COOKIE_JAR"; then
