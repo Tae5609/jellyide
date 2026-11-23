@@ -81,14 +81,16 @@ function LocationProbe() {
   return <span data-testid="location">{useLocation().pathname}</span>;
 }
 
-function setInput(container, name, value) {
+async function setInput(container, name, value) {
   const input = container.querySelector(`input[name="${name}"]`);
   const setter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
     'value'
   ).set;
-  setter.call(input, value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await act(async () => {
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 }
 
 async function submitForm(container) {
@@ -119,8 +121,8 @@ describe('Register page', () => {
     const { container, unmount } = await renderRegister();
     expect(container.querySelector('form')).toBeTruthy();
 
-    setInput(container, 'username', 'newbie');
-    setInput(container, 'password', 'password-123');
+    await setInput(container, 'username', 'newbie');
+    await setInput(container, 'password', 'password-123');
     await submitForm(container);
 
     expect(container.textContent).toContain(
@@ -140,8 +142,8 @@ describe('Register page', () => {
     });
     const { container, unmount } = await renderRegister();
 
-    setInput(container, 'username', 'newbie');
-    setInput(container, 'password', 'password-123');
+    await setInput(container, 'username', 'newbie');
+    await setInput(container, 'password', 'password-123');
     await submitForm(container);
 
     expect(global.fetch).toHaveBeenCalledWith(
@@ -159,8 +161,8 @@ describe('Register page', () => {
     mockFetch({ registration: 'open' });
     const { container, unmount } = await renderRegister();
 
-    setInput(container, 'username', 'newbie');
-    setInput(container, 'password', 'short-1');
+    await setInput(container, 'username', 'newbie');
+    await setInput(container, 'password', 'short-1');
     await submitForm(container);
 
     expect(container.textContent).toContain(
@@ -180,11 +182,39 @@ describe('Register page', () => {
     });
     const { container, unmount } = await renderRegister();
 
-    setInput(container, 'username', 'newbie');
-    setInput(container, 'password', 'password-123');
+    await setInput(container, 'username', 'newbie');
+    await setInput(container, 'password', 'password-123');
     await submitForm(container);
 
     expect(container.textContent).toContain('username already taken');
     await unmount();
+  });
+
+  // Regression (BUGS.md, Register.test.js setInput): the bare `input`
+  // dispatch used to run outside act, so every state-changing setInput
+  // logged an "An update to Register inside a test was not wrapped in
+  // act(...)" warning through console.error. Fail if one ever returns.
+  test('input updates log no act warnings', async () => {
+    mockFetch({ registration: 'open' });
+    const { container, unmount } = await renderRegister();
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => errors.push(args.map(String).join(' '));
+    try {
+      await setInput(container, 'username', 'newbie');
+      await setInput(container, 'password', 'password-123');
+      // Let React flush any update it scheduled outside act, so an
+      // escaped-update warning would land in the capture before the
+      // assertion runs.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await act(async () => {});
+      const actWarnings = errors.filter((line) =>
+        line.includes('not wrapped in act')
+      );
+      expect(actWarnings).toEqual([]);
+    } finally {
+      console.error = originalError;
+      await unmount();
+    }
   });
 });
