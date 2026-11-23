@@ -5,6 +5,8 @@ Runs LAST (after T6a, T6b, T9, T11, T12, T12b, T14, T15, T16, T17, T19 are all m
 ## Scope
 Re-read each doc against the merged code and fix every mismatch. Known surfaces to check (not exhaustive — follow the code):
 
+0. **KNOWN STALE SPOTS (found by T6b-fix-r1, 2026-11-23):** `docs/API.md:731-734` ("values are not persisted… hard-coded in download.NewDownloader… CONCURRENT_DOWNLOAD is never read by the server code") and `docs/DEVELOPMENT.md:204-206` ("the server code never reads it") are both wrong post-T18 (#31: env read in NewDownloader, default 2, clamp 32, runtime SetLimit). Fix both; the corrected .env.example/DEPLOYMENT.md wording from T6b is the reference.
+
 1. **Env vars** (docs/DEPLOYMENT.md env table + .env.example + README quick start): every var the code reads, with final defaults and semantics:
    - `DOWNLOAD_MAX_RETRIES` (T14: default 2, 0 disables auto-retry).
    - `CONCURRENT_DOWNLOAD` (T18: read at startup, fallback 2, clamp 32).
