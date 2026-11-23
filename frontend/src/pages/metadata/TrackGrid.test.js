@@ -97,7 +97,7 @@ function renderGrid(overrides = {}) {
           }
         />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter>,
   );
   return { onCommitEdit, ...utils };
 }
@@ -201,7 +201,6 @@ describe('TrackGrid inline editing', () => {
   });
 
   test('dirty cells are highlighted and the original stays visible in the diff', async () => {
-    const user = userEvent.setup();
     const { container } = renderGrid({ edits: { 't1.title': 'One (New)' } });
 
     // The pending value is shown, marked as modified.
@@ -222,10 +221,7 @@ describe('TrackGrid sync chips', () => {
   test('a conflict row shows a chip that navigates to /sync', async () => {
     const user = userEvent.setup();
     renderGrid({
-      tracks: [
-        { ...tracks[0], state: 'conflict' },
-        { ...tracks[1] },
-      ],
+      tracks: [{ ...tracks[0], state: 'conflict' }, { ...tracks[1] }],
     });
 
     // The table and the mobile cards both render (CSS hides one), so the

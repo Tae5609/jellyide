@@ -63,7 +63,7 @@ function renderPage() {
           <Route path="/library/:artistId/:albumId" element={<MetadataPage />} />
         </Routes>
       </MemoryRouter>
-    </ModalProvider>
+    </ModalProvider>,
   );
 }
 
@@ -154,9 +154,7 @@ describe('MetadataPage shortcuts', () => {
 
     // Arrows share the same cell-focus navigation.
     await user.keyboard('{ArrowRight}');
-    expect(screen.getByTestId('cell-t1-album_artist').closest('td')).toHaveClass(
-      'focused'
-    );
+    expect(screen.getByTestId('cell-t1-album_artist').closest('td')).toHaveClass('focused');
   });
 
   test('Tab is released once the pointer leaves the grid card', async () => {
@@ -175,9 +173,7 @@ describe('MetadataPage shortcuts', () => {
     // Tab stays with the browser (WCAG 2.1.2) instead of being captured,
     // and the stale cell marker is dropped (onTab not called).
     expect(pressTab()).toBe(false);
-    expect(screen.getByTestId('cell-t1-title').closest('td')).not.toHaveClass(
-      'focused'
-    );
+    expect(screen.getByTestId('cell-t1-title').closest('td')).not.toHaveClass('focused');
   });
 
   test('Tab is released when the grid card blurs to the outside', async () => {
@@ -197,9 +193,7 @@ describe('MetadataPage shortcuts', () => {
     fireEvent.focusOut(card, { relatedTarget: document.body });
 
     expect(pressTab()).toBe(false);
-    expect(screen.getByTestId('cell-t1-title').closest('td')).not.toHaveClass(
-      'focused'
-    );
+    expect(screen.getByTestId('cell-t1-title').closest('td')).not.toHaveClass('focused');
   });
 
   test('Enter on a focused grid button does not open the cell editor', async () => {
@@ -312,13 +306,12 @@ function mockT16Api(opts = {}) {
     }
     if (url.startsWith('/api/metadata/tracks') && method === 'PATCH') {
       patchCalls.push(JSON.parse(init.body));
-      const responder = opts.patchResponder || (() => jsonResponse({ job_id: 'j1', change_set_id: 'c1' }, 202));
+      const responder =
+        opts.patchResponder || (() => jsonResponse({ job_id: 'j1', change_set_id: 'c1' }, 202));
       return responder(patchCalls.length);
     }
     if (url.startsWith('/api/jobs')) {
-      return jsonResponse([
-        { id: 'j1', status: 'completed', details: opts.jobDetails || '{}' },
-      ]);
+      return jsonResponse([{ id: 'j1', status: 'completed', details: opts.jobDetails || '{}' }]);
     }
     return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
   });
@@ -390,10 +383,7 @@ describe('MetadataPage T16 apply flow', () => {
       patchResponder: () => {
         patches += 1;
         if (patches === 1) {
-          return jsonResponseWithStatus(
-            { error: 'one or more tracks changed', conflicts },
-            409
-          );
+          return jsonResponseWithStatus({ error: 'one or more tracks changed', conflicts }, 409);
         }
         return jsonResponse({ job_id: 'j1', change_set_id: 'c1' }, 202);
       },
@@ -461,8 +451,6 @@ describe('MetadataPage T16 apply flow', () => {
 
     await screen.findByText(/changed on disk during apply/i);
     // No conflict dialog for external changes.
-    expect(
-      screen.queryByRole('dialog', { name: 'Version conflict' })
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Version conflict' })).not.toBeInTheDocument();
   });
 });

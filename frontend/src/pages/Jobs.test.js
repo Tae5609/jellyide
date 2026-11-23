@@ -28,8 +28,7 @@ function makeJob(overrides = {}) {
 // or a function of the current call count, so tests can observe refetches
 // and mutate state between them.
 function jobsFetch(jobs, { retryStatus = 200, retryBody, retryAllStatus = 200 } = {}) {
-  const impl = jest.fn(async (url, opts = {}) => {
-    const method = opts.method || 'GET';
+  const impl = jest.fn(async (url) => {
     if (url === '/api/jobs') {
       const list = typeof jobs === 'function' ? jobs() : jobs;
       return new Response(JSON.stringify(list), { status: 200 });
@@ -45,12 +44,9 @@ function jobsFetch(jobs, { retryStatus = 200, retryBody, retryAllStatus = 200 } 
     }
     return new Response(null, { status: 404 });
   });
-  const jobListCalls = () =>
-    impl.mock.calls.filter((c) => c[0] === '/api/jobs').length;
+  const jobListCalls = () => impl.mock.calls.filter((c) => c[0] === '/api/jobs').length;
   const callsWith = (url, method = 'GET') =>
-    impl.mock.calls.filter(
-      (c) => c[0] === url && (c[1] || {}).method === method
-    );
+    impl.mock.calls.filter((c) => c[0] === url && (c[1] || {}).method === method);
   return { impl, jobListCalls, callsWith };
 }
 
@@ -63,7 +59,7 @@ async function renderJobs(fetchImpl) {
     root.render(
       <ModalProvider>
         <Jobs />
-      </ModalProvider>
+      </ModalProvider>,
     );
   });
   return {
@@ -74,11 +70,10 @@ async function renderJobs(fetchImpl) {
 
 // The page renders each job twice (desktop table and mobile cards), so
 // every lookup returns all instances.
-const retryButtons = (container) =>
-  Array.from(container.querySelectorAll('.job-retry-btn'));
+const retryButtons = (container) => Array.from(container.querySelectorAll('.job-retry-btn'));
 const retryAllButton = (container) =>
   Array.from(container.querySelectorAll('button')).find((b) =>
-    b.textContent.includes('Retry all failed')
+    b.textContent.includes('Retry all failed'),
   );
 const click = async (element) => {
   await act(async () => {
@@ -114,10 +109,7 @@ describe('Jobs retry', () => {
       if (url === '/api/jobs/dl-1/retry' && (opts || {}).method === 'POST') {
         retryCalls += 1;
         await retryGate;
-        return new Response(
-          JSON.stringify({ ...failed, status: 'queued' }),
-          { status: 200 }
-        );
+        return new Response(JSON.stringify({ ...failed, status: 'queued' }), { status: 200 });
       }
       return new Response(null, { status: 404 });
     });
@@ -207,19 +199,15 @@ describe('Jobs retry', () => {
     await click(retryButtons(container)[0]);
 
     expect(alertSpy).not.toHaveBeenCalled();
-    expect(container.querySelector('.modal-title').textContent).toBe(
-      'Retry failed'
-    );
+    expect(container.querySelector('.modal-title').textContent).toBe('Retry failed');
     expect(container.querySelector('.modal-message').textContent).toBe(
-      'job is not a failed download'
+      'job is not a failed download',
     );
     await unmount();
   });
 
   test('truncates long errors with a working details expander', async () => {
-    const mocked = jobsFetch([
-      makeJob({ id: 'dl-1', status: 'failed', error: LONG_ERROR }),
-    ]);
+    const mocked = jobsFetch([makeJob({ id: 'dl-1', status: 'failed', error: LONG_ERROR })]);
     const { container, unmount } = await renderJobs(mocked.impl);
 
     const truncated = `${LONG_ERROR.slice(0, 80)}…`;
@@ -260,7 +248,7 @@ describe('Jobs retry', () => {
           error: 'HTTP Error 503',
           attempts: 2,
         }),
-      ]).impl
+      ]).impl,
     );
     expect(container.textContent).toContain('attempt 2');
     expect(container.textContent).not.toContain('retrying in');
@@ -269,16 +257,14 @@ describe('Jobs retry', () => {
     // "retrying in …" badge for a queued job with a future next_retry_at.
     const future = new Date(Date.now() + 30 * 1000).toISOString();
     ({ container, unmount } = await renderJobs(
-      jobsFetch([
-        makeJob({ id: 'dl-2', status: 'queued', next_retry_at: future }),
-      ]).impl
+      jobsFetch([makeJob({ id: 'dl-2', status: 'queued', next_retry_at: future })]).impl,
     ));
     expect(container.textContent).toContain('retrying in');
     await unmount();
 
     // A plain queued job without a scheduled retry shows no badge.
     ({ container, unmount } = await renderJobs(
-      jobsFetch([makeJob({ id: 'dl-3', status: 'queued' })]).impl
+      jobsFetch([makeJob({ id: 'dl-3', status: 'queued' })]).impl,
     ));
     expect(container.textContent).not.toContain('retrying in');
     await unmount();
@@ -290,9 +276,7 @@ describe('Jobs retry', () => {
     // never "retrying in null".
     const past = new Date(Date.now() - 30 * 1000).toISOString();
     const { container, unmount } = await renderJobs(
-      jobsFetch([
-        makeJob({ id: 'dl-1', status: 'queued', next_retry_at: past }),
-      ]).impl
+      jobsFetch([makeJob({ id: 'dl-1', status: 'queued', next_retry_at: past })]).impl,
     );
     expect(container.querySelector('.retry-scheduled')).toBeNull();
     expect(container.textContent).not.toContain('retrying in');

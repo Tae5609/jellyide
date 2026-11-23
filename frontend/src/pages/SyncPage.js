@@ -109,7 +109,9 @@ export default function SyncPage() {
   };
 
   const allChosen = (group) =>
-    group.fields.every((f) => choiceOf(f.conflict_id || f.id) && choiceOf(f.conflict_id || f.id).choice);
+    group.fields.every(
+      (f) => choiceOf(f.conflict_id || f.id) && choiceOf(f.conflict_id || f.id).choice,
+    );
 
   const resolveTrack = (group) => {
     const resolutions = group.fields.map((f) => ({
@@ -123,7 +125,7 @@ export default function SyncPage() {
       apiFetch('/sync/conflicts/resolve', {
         method: 'POST',
         body: JSON.stringify({ resolutions }),
-      })
+      }),
     );
   };
 
@@ -132,7 +134,7 @@ export default function SyncPage() {
       apiFetch('/sync/conflicts/resolve-all', {
         method: 'POST',
         body: JSON.stringify({ choice }),
-      })
+      }),
     );
 
   const dismiss = async (conflict) => {
@@ -158,14 +160,14 @@ export default function SyncPage() {
       apiFetch(`/sync/missing/${m.track_id}/relink`, {
         method: 'POST',
         body: JSON.stringify({ path }),
-      })
+      }),
     );
   };
 
   const deleteMissing = async (m) => {
     const ok = await showConfirm(
       'Delete track row?',
-      `Delete "${m.title}" from the database? The file is already gone; this only removes the row and its history.`
+      `Delete "${m.title}" from the database? The file is already gone; this only removes the row and its history.`,
     );
     if (!ok) return;
     setBusy(true);
@@ -186,7 +188,7 @@ export default function SyncPage() {
 
   const restore = (entry) => {
     withJob('File restored.', () =>
-      apiFetch(`/sync/trash/${entry.id}/restore`, { method: 'POST' })
+      apiFetch(`/sync/trash/${entry.id}/restore`, { method: 'POST' }),
     );
   };
 
@@ -238,8 +240,8 @@ export default function SyncPage() {
         <section className="sync-section">
           {groups.length === 0 ? (
             <p className="lookup-status">
-              No open conflicts. When a file changes outside JellyIDE it is
-              listed here for a decision.
+              No open conflicts. When a file changes outside JellyIDE it is listed here for a
+              decision.
             </p>
           ) : (
             <>

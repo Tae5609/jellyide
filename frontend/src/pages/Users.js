@@ -74,7 +74,7 @@ export default function Users() {
   const disable = async (u) => {
     const ok = await showConfirm(
       'Disable user',
-      `${u.username} will be signed out of all sessions and cannot log in until re-enabled.`
+      `${u.username} will be signed out of all sessions and cannot log in until re-enabled.`,
     );
     if (ok) patch(u, { status: 'disabled' });
   };
@@ -83,10 +83,7 @@ export default function Users() {
 
   const toggleAdmin = async (u) => {
     if (u.is_admin) {
-      const ok = await showConfirm(
-        'Remove admin',
-        `Remove admin rights from ${u.username}?`
-      );
+      const ok = await showConfirm('Remove admin', `Remove admin rights from ${u.username}?`);
       if (!ok) return;
     }
     patch(u, { is_admin: !u.is_admin });
@@ -95,7 +92,7 @@ export default function Users() {
   const resetPassword = async (u) => {
     const ok = await showConfirm(
       'Reset password',
-      `Reset the password for ${u.username}? Their active sessions will be deleted.`
+      `Reset the password for ${u.username}? Their active sessions will be deleted.`,
     );
     if (ok) setDialog({ type: 'reset', target: u });
   };
@@ -103,7 +100,7 @@ export default function Users() {
   const removeUser = async (u) => {
     const ok = await showConfirm(
       'Delete user',
-      `Delete ${u.username}? This cannot be undone and deletes all of their sessions.`
+      `Delete ${u.username}? This cannot be undone and deletes all of their sessions.`,
     );
     if (!ok) return;
     await run(u.id, async () => {
@@ -271,7 +268,9 @@ export default function Users() {
                     <div className="user-card-meta">
                       {u.display_name && <span>{u.display_name}</span>}
                       <span>{u.email || 'No email'}</span>
-                      <span>Provider: {u.provider} · Admin: {u.is_admin ? 'yes' : 'no'}</span>
+                      <span>
+                        Provider: {u.provider} · Admin: {u.is_admin ? 'yes' : 'no'}
+                      </span>
                       <span>Last login: {formatTime(u.last_login)}</span>
                     </div>
                     {rowActions(u)}
@@ -378,7 +377,9 @@ function CreateUserDialog({ onClose }) {
             onChange={(e) => setUsername(e.target.value)}
             required
           />
-          <p className="settings-hint">3-32 characters: letters, numbers, dot, dash or underscore.</p>
+          <p className="settings-hint">
+            3-32 characters: letters, numbers, dot, dash or underscore.
+          </p>
         </div>
         <div className="settings-field">
           <label className="settings-label" htmlFor="create-password">

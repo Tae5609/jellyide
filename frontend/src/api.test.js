@@ -19,7 +19,7 @@ describe('apiFetch', () => {
     await apiFetch('/jobs');
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/jobs',
-      expect.objectContaining({ credentials: 'same-origin' })
+      expect.objectContaining({ credentials: 'same-origin' }),
     );
   });
 

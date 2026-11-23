@@ -20,9 +20,7 @@ export default function HistoryDrawer({ albumId, onClose, onReverted, onError })
   const load = useCallback(async () => {
     setError('');
     try {
-      const res = await apiFetch(
-        `/metadata/history?album_id=${encodeURIComponent(albumId)}`
-      );
+      const res = await apiFetch(`/metadata/history?album_id=${encodeURIComponent(albumId)}`);
       if (!res.ok) throw new Error(await errorFromResponse(res));
       setEntries(await res.json());
     } catch (e) {
@@ -37,7 +35,7 @@ export default function HistoryDrawer({ albumId, onClose, onReverted, onError })
   const revert = async (entry) => {
     const ok = await showConfirm(
       'Revert change set?',
-      `The previous values of ${entry.track_count} track${entry.track_count === 1 ? '' : 's'} will be restored as a new change set.`
+      `The previous values of ${entry.track_count} track${entry.track_count === 1 ? '' : 's'} will be restored as a new change set.`,
     );
     if (!ok) return;
     setBusyId(entry.change_set_id);

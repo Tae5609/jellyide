@@ -11,13 +11,28 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
-    "test": "react-scripts test"
+    "test": "react-scripts test",
+    "test:ci": "react-scripts test --watchAll=false --coverage",
+    "lint": "eslint src --max-warnings=0",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src"
   },
   "jest": {
     "moduleNameMapper": {
       "^react-router$": "<rootDir>/src/testSetup/reactRouter.js",
       "^react-router/dom$": "<rootDir>/src/testSetup/reactRouterDom.js"
-    }
+    },
+    "coverageThreshold": {
+      "global": {
+        "lines": 60
+      }
+    },
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/index.js",
+      "!src/testSetup/**",
+      "!src/**/*.test.js"
+    ]
   },
   "browserslist": {
     "production": [
@@ -35,6 +50,8 @@
     "@testing-library/dom": "9.3.4",
     "@testing-library/jest-dom": "5.17.0",
     "@testing-library/react": "14.3.1",
-    "@testing-library/user-event": "14.4.3"
+    "@testing-library/user-event": "14.4.3",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.10.1"
   }
 }

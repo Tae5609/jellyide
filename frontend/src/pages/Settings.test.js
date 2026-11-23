@@ -37,7 +37,7 @@ function mockFetch({ isAdmin = true, ytdlpUpdating = null } = {}) {
           oidc: { enabled: false, name: '' },
           saml: { enabled: false, name: '' },
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url === '/api/auth/me') {
@@ -48,25 +48,19 @@ function mockFetch({ isAdmin = true, ytdlpUpdating = null } = {}) {
           provider: 'oidc',
           is_admin: isAdmin,
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url === '/api/config') {
       if (opts.method === 'POST') {
         return new Response(JSON.stringify({}), { status: 200 });
       }
-      return new Response(
-        JSON.stringify({ concurrent_limit: 2, proxy: '' }),
-        { status: 200 }
-      );
+      return new Response(JSON.stringify({ concurrent_limit: 2, proxy: '' }), { status: 200 });
     }
     if (url === '/api/admin/ytdlp') {
       ytdlpGets += 1;
       const updating = ytdlpUpdating ? (ytdlpUpdating[ytdlpGets - 1] ?? false) : false;
-      return new Response(
-        JSON.stringify({ ...YTDLP_STATUS, updating }),
-        { status: 200 }
-      );
+      return new Response(JSON.stringify({ ...YTDLP_STATUS, updating }), { status: 200 });
     }
     if (url === '/api/admin/ytdlp/update' && opts.method === 'POST') {
       return new Response(JSON.stringify({ job_id: 'ytdlp-job-1' }), { status: 202 });
@@ -74,7 +68,7 @@ function mockFetch({ isAdmin = true, ytdlpUpdating = null } = {}) {
     if (url === '/api/admin/ytdlp/rollback' && opts.method === 'POST') {
       return new Response(
         JSON.stringify({ ...YTDLP_STATUS, version: '2025.1.10', has_rollback: false }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url === '/api/admin/ytdlp/check') {
@@ -93,7 +87,7 @@ function mockFetch({ isAdmin = true, ytdlpUpdating = null } = {}) {
           updating: false,
           has_rollback: true,
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url === '/api/admin/settings') {
@@ -115,7 +109,7 @@ async function renderSettings(opts = {}) {
         <AuthProvider>
           <Settings />
         </AuthProvider>
-      </ModalProvider>
+      </ModalProvider>,
     );
   });
   return {
@@ -125,21 +119,17 @@ async function renderSettings(opts = {}) {
   };
 }
 
-const limitInput = (container) =>
-  container.querySelector('input[type="number"]');
+const limitInput = (container) => container.querySelector('input[type="number"]');
 
 const saveButton = (container) =>
   Array.from(container.querySelectorAll('button')).find(
-    (b) => b.textContent === 'Save Configuration'
+    (b) => b.textContent === 'Save Configuration',
   );
 
 function setLimit(container, value) {
   act(() => {
     const input = limitInput(container);
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value'
-    ).set;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
     setter.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
@@ -147,15 +137,13 @@ function setLimit(container, value) {
 
 async function clickSave(container) {
   await act(async () => {
-    saveButton(container).dispatchEvent(
-      new MouseEvent('click', { bubbles: true })
-    );
+    saveButton(container).dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
 }
 
 const postConfigCalls = (fetchMock) =>
   fetchMock.mock.calls.filter(
-    ([url, opts]) => url === '/api/config' && opts && opts.method === 'POST'
+    ([url, opts]) => url === '/api/config' && opts && opts.method === 'POST',
   );
 
 describe('Settings concurrent limit validation', () => {
@@ -169,9 +157,7 @@ describe('Settings concurrent limit validation', () => {
     setLimit(container, '');
     await clickSave(container);
 
-    expect(container.textContent).toContain(
-      'Enter a positive whole number'
-    );
+    expect(container.textContent).toContain('Enter a positive whole number');
     expect(postConfigCalls(fetchImpl)).toHaveLength(0);
     // The previous value (loaded from /config) is restored, not NaN/null.
     expect(limitInput(container).value).toBe('2');
@@ -183,9 +169,7 @@ describe('Settings concurrent limit validation', () => {
 
     setLimit(container, '1.5');
     await clickSave(container);
-    expect(container.textContent).toContain(
-      'Enter a positive whole number'
-    );
+    expect(container.textContent).toContain('Enter a positive whole number');
     expect(postConfigCalls(fetchImpl)).toHaveLength(0);
 
     setLimit(container, '0');
@@ -208,9 +192,7 @@ describe('Settings concurrent limit validation', () => {
       concurrent_limit: 5,
       proxy: '',
     });
-    expect(container.querySelector('.modal-title').textContent).toBe(
-      'Settings Saved'
-    );
+    expect(container.querySelector('.modal-title').textContent).toBe('Settings Saved');
     await unmount();
   });
 });
@@ -247,7 +229,7 @@ describe('Settings admin controls and yt-dlp card', () => {
 
     // Clicking Check for updates calls /api/admin/ytdlp/check
     const checkBtn = Array.from(card.querySelectorAll('button')).find(
-      b => b.textContent === 'Check for updates'
+      (b) => b.textContent === 'Check for updates',
     );
     expect(checkBtn).toBeDefined();
 
@@ -256,7 +238,7 @@ describe('Settings admin controls and yt-dlp card', () => {
     });
 
     const checkCalls = fetchImpl.mock.calls.filter(
-      ([url, opts]) => url === '/api/admin/ytdlp/check' && opts && opts.method === 'POST'
+      ([url, opts]) => url === '/api/admin/ytdlp/check' && opts && opts.method === 'POST',
     );
     expect(checkCalls).toHaveLength(1);
 
@@ -276,7 +258,7 @@ describe('Settings admin controls and yt-dlp card', () => {
 
       const card = container.querySelector('[data-testid="ytdlp-card"]');
       const updateBtn = Array.from(card.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Update now'
+        (b) => b.textContent === 'Update now',
       );
       expect(updateBtn).toBeDefined();
       expect(updateBtn.disabled).toBe(false);
@@ -287,7 +269,7 @@ describe('Settings admin controls and yt-dlp card', () => {
 
       // The update job was started.
       const updateCalls = fetchImpl.mock.calls.filter(
-        ([url, opts]) => url === '/api/admin/ytdlp/update' && opts && opts.method === 'POST'
+        ([url, opts]) => url === '/api/admin/ytdlp/update' && opts && opts.method === 'POST',
       );
       expect(updateCalls).toHaveLength(1);
       expect(JSON.parse(updateCalls[0][1].body)).toEqual({ force: false });
@@ -298,11 +280,7 @@ describe('Settings admin controls and yt-dlp card', () => {
       expect(ytdlpGets()).toBe(2);
 
       // Poll (2s interval) until the status reports updating=false.
-      for (
-        let i = 0;
-        i < 4 && !container.textContent.includes('yt-dlp update finished.');
-        i += 1
-      ) {
+      for (let i = 0; i < 4 && !container.textContent.includes('yt-dlp update finished.'); i += 1) {
         await act(async () => {
           jest.advanceTimersByTime(2000);
         });
@@ -311,7 +289,7 @@ describe('Settings admin controls and yt-dlp card', () => {
 
       // The button is back and enabled once the update is done.
       const doneBtn = Array.from(card.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Update now'
+        (b) => b.textContent === 'Update now',
       );
       expect(doneBtn).toBeDefined();
       expect(doneBtn.disabled).toBe(false);
@@ -335,14 +313,14 @@ describe('Settings admin controls and yt-dlp card', () => {
 
     const card = container.querySelector('[data-testid="ytdlp-card"]');
     const rollbackBtn = Array.from(card.querySelectorAll('button')).find(
-      (b) => b.textContent === 'Roll back'
+      (b) => b.textContent === 'Roll back',
     );
     expect(rollbackBtn).toBeDefined();
     expect(rollbackBtn.disabled).toBe(false);
 
     const rollbackCalls = () =>
       fetchImpl.mock.calls.filter(
-        ([url, opts]) => url === '/api/admin/ytdlp/rollback' && opts && opts.method === 'POST'
+        ([url, opts]) => url === '/api/admin/ytdlp/rollback' && opts && opts.method === 'POST',
       );
 
     // Clicking Roll back opens the confirm modal, not the request.
@@ -359,7 +337,7 @@ describe('Settings admin controls and yt-dlp card', () => {
 
     // Declining closes the modal and keeps the binary: no rollback POST.
     const cancelBtn = Array.from(container.querySelectorAll('.modal-actions button')).find(
-      (b) => b.textContent === 'Cancel'
+      (b) => b.textContent === 'Cancel',
     );
     await act(async () => {
       cancelBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -372,7 +350,7 @@ describe('Settings admin controls and yt-dlp card', () => {
       rollbackBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     const confirmBtn = Array.from(container.querySelectorAll('.modal-actions button')).find(
-      (b) => b.textContent === 'Confirm'
+      (b) => b.textContent === 'Confirm',
     );
     expect(confirmBtn).toBeDefined();
     await act(async () => {
@@ -399,7 +377,7 @@ function mockFetchAdmin(isAdmin, syncPolicy) {
           oidc: { enabled: false, name: '' },
           saml: { enabled: false, name: '' },
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url === '/api/auth/me') {
@@ -410,21 +388,20 @@ function mockFetchAdmin(isAdmin, syncPolicy) {
           provider: 'local',
           is_admin: isAdmin,
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url === '/api/config') {
       if (opts.method === 'POST') {
         return new Response(JSON.stringify({}), { status: 200 });
       }
-      return new Response(
-        JSON.stringify({ concurrent_limit: 2, proxy: '' }),
-        { status: 200 }
-      );
+      return new Response(JSON.stringify({ concurrent_limit: 2, proxy: '' }), { status: 200 });
     }
     if (url === '/api/admin/settings/sync') {
       if (opts.method === 'PUT') {
-        return new Response(JSON.stringify({ policy: JSON.parse(opts.body).policy }), { status: 200 });
+        return new Response(JSON.stringify({ policy: JSON.parse(opts.body).policy }), {
+          status: 200,
+        });
       }
       return new Response(JSON.stringify({ policy: syncPolicy || 'ask' }), { status: 200 });
     }
@@ -443,7 +420,7 @@ async function renderSettingsWith(fetchImpl) {
         <AuthProvider>
           <Settings />
         </AuthProvider>
-      </ModalProvider>
+      </ModalProvider>,
     );
   });
   return {
@@ -454,7 +431,7 @@ async function renderSettingsWith(fetchImpl) {
 
 const syncPolicyCalls = (fetchMock) =>
   fetchMock.mock.calls.filter(
-    ([url, opts]) => url === '/api/admin/settings/sync' && opts && opts.method === 'PUT'
+    ([url, opts]) => url === '/api/admin/settings/sync' && opts && opts.method === 'PUT',
   );
 
 describe('Settings sync policy card', () => {
@@ -469,7 +446,7 @@ describe('Settings sync policy card', () => {
     // The card is present for admins, with the loaded policy selected.
     expect(container.textContent).toContain('Sync conflicts');
     const fileWins = Array.from(container.querySelectorAll('input[name="sync_policy"]')).find(
-      (i) => i.value === 'file_wins'
+      (i) => i.value === 'file_wins',
     );
     expect(fileWins).toBeTruthy();
 
@@ -478,7 +455,7 @@ describe('Settings sync policy card', () => {
     });
     await act(async () => {
       const save = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent === 'Save Sync Policy'
+        (b) => b.textContent === 'Save Sync Policy',
       );
       save.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });

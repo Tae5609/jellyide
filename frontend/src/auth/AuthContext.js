@@ -1,10 +1,4 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-} from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiFetch } from '../api';
 
 const AuthContext = createContext(null);
@@ -128,9 +122,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider
-      value={{ user, providers, loading, login, logout, refresh }}
-    >
+    <AuthContext.Provider value={{ user, providers, loading, login, logout, refresh }}>
       {children}
     </AuthContext.Provider>
   );

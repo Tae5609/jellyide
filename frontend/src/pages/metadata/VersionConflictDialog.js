@@ -40,12 +40,11 @@ export default function VersionConflictDialog({
   // overwrite a value the user has not seen.
   const [choices, setChoices] = useState({});
 
-  const titleOf = (trackId) => {
-    const t = tracks.find((tr) => tr.id === trackId);
-    return (t && t.title) || trackId;
-  };
-
   const rows = useMemo(() => {
+    const titleOf = (trackId) => {
+      const t = tracks.find((tr) => tr.id === trackId);
+      return (t && t.title) || trackId;
+    };
     const out = [];
     conflicts.forEach((c) => {
       const edit = (edits || []).find((e) => e.track_id === c.track_id);
@@ -116,8 +115,8 @@ export default function VersionConflictDialog({
         </div>
         <div className="dialog-body">
           <p className="lookup-status">
-            These tracks changed since you started editing. Pick for each field
-            whether to keep the current value or overwrite it with yours.
+            These tracks changed since you started editing. Pick for each field whether to keep the
+            current value or overwrite it with yours.
           </p>
           <div className="table-scroll">
             <table className="review-table">

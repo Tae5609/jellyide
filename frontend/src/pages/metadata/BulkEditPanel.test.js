@@ -6,9 +6,7 @@ import BulkEditPanel from './BulkEditPanel';
 function renderPanel(overrides = {}) {
   const onApply = jest.fn();
   const onError = jest.fn();
-  render(
-    <BulkEditPanel selectedCount={2} onApply={onApply} onError={onError} {...overrides} />
-  );
+  render(<BulkEditPanel selectedCount={2} onApply={onApply} onError={onError} {...overrides} />);
   return { onApply, onError };
 }
 

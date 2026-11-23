@@ -18,7 +18,7 @@ function mockApi() {
             score: 100,
           },
         ]),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url.startsWith('/api/metadata/lookup/release/m1')) {
@@ -41,7 +41,7 @@ function mockApi() {
             },
           ],
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
@@ -56,7 +56,7 @@ function renderDialog(onApply) {
       onClose={jest.fn()}
       onApply={onApply}
       onError={jest.fn()}
-    />
+    />,
   );
 }
 
@@ -71,7 +71,7 @@ const rowFor = (index) => document.querySelectorAll('.lookup-row')[index];
 const fieldCheckbox = (row, fieldName) => {
   const labels = row.querySelectorAll('.lookup-field');
   const label = Array.from(labels).find(
-    (l) => l.querySelector('.lookup-field-name').textContent === fieldName
+    (l) => l.querySelector('.lookup-field-name').textContent === fieldName,
   );
   return label.querySelector('input');
 };
@@ -127,9 +127,7 @@ describe('LookupDialog', () => {
 
     expect(onApply).toHaveBeenCalledTimes(1);
     const [entries, coverUrl] = onApply.mock.calls[0];
-    expect(entries).toEqual([
-      { trackId: 't1', field: 'title', value: 'Blue Train' },
-    ]);
+    expect(entries).toEqual([{ trackId: 't1', field: 'title', value: 'Blue Train' }]);
     expect(coverUrl).toBeNull();
   });
 
@@ -149,7 +147,9 @@ describe('LookupDialog', () => {
   });
 
   test('shows search errors without crashing', async () => {
-    global.fetch = jest.fn(async () => new Response(JSON.stringify({ error: 'boom' }), { status: 500 }));
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ error: 'boom' }), { status: 500 }),
+    );
     const onApply = jest.fn();
     renderDialog(onApply);
 

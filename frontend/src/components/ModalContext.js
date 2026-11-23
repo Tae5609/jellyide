@@ -27,7 +27,7 @@ export function ModalProvider({ children }) {
         onConfirm: () => {
           setModal(null);
           resolve(true);
-        }
+        },
       });
     });
   };
@@ -45,7 +45,7 @@ export function ModalProvider({ children }) {
         onCancel: () => {
           setModal(null);
           resolve(false);
-        }
+        },
       });
     });
   };
@@ -61,7 +61,9 @@ export function ModalProvider({ children }) {
             <p className="modal-message">{modal.message}</p>
             <div className="modal-actions">
               {modal.type === 'confirm' && (
-                <button className="btn-secondary" onClick={modal.onCancel}>Cancel</button>
+                <button className="btn-secondary" onClick={modal.onCancel}>
+                  Cancel
+                </button>
               )}
               <button className="btn-primary" onClick={modal.onConfirm}>
                 {modal.type === 'confirm' ? 'Confirm' : 'OK'}

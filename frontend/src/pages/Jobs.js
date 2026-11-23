@@ -77,7 +77,7 @@ export default function Jobs() {
       await apiFetch('/jobs/clear', { method: 'POST' });
       fetchJobs();
     } catch (err) {
-      showAlert("Error", err.message);
+      showAlert('Error', err.message);
     }
   };
 
@@ -87,13 +87,11 @@ export default function Jobs() {
       const res = await apiFetch(`/jobs/${id}/retry`, { method: 'POST' });
       if (!res.ok) {
         const bodyError = await readError(res);
-        throw new Error(
-          bodyError || `retry failed (HTTP ${res.status})`
-        );
+        throw new Error(bodyError || `retry failed (HTTP ${res.status})`);
       }
       await fetchJobs();
     } catch (err) {
-      showAlert("Retry failed", err.message);
+      showAlert('Retry failed', err.message);
     } finally {
       setRetryingIds((prev) => {
         const next = new Set(prev);
@@ -113,7 +111,7 @@ export default function Jobs() {
       }
       await fetchJobs();
     } catch (err) {
-      showAlert("Retry failed", err.message);
+      showAlert('Retry failed', err.message);
     } finally {
       setRetryingAll(false);
     }
@@ -141,9 +139,7 @@ export default function Jobs() {
 
   const renderBadges = (job) => (
     <span className="job-badges">
-      <span className={`badge ${job.status}`}>
-        {job.status}
-      </span>
+      <span className={`badge ${job.status}`}>{job.status}</span>
       {isRetryScheduled(job) && (
         <span className="badge retry-scheduled">
           {`retrying in ${formatRetryIn(job.next_retry_at)}`}
@@ -162,11 +158,7 @@ export default function Jobs() {
           {expanded ? job.error : text}
         </span>
         {truncated && (
-          <button
-            type="button"
-            className="job-error-toggle"
-            onClick={() => toggleError(job.id)}
-          >
+          <button type="button" className="job-error-toggle" onClick={() => toggleError(job.id)}>
             {expanded ? 'less' : 'details'}
           </button>
         )}
@@ -206,9 +198,7 @@ export default function Jobs() {
               disabled={retryingAll}
             >
               {retryingAll && <span className="spinner" aria-hidden="true" />}
-              {retryingAll
-                ? 'Retrying…'
-                : `Retry all failed (${failedDownloadCount})`}
+              {retryingAll ? 'Retrying…' : `Retry all failed (${failedDownloadCount})`}
             </button>
           )}
           <button className="btn-secondary" onClick={clearJobs}>
@@ -220,7 +210,19 @@ export default function Jobs() {
       <div className="card card-flush">
         {jobs.length === 0 ? (
           <div className="empty-state">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
             <h3>No Active Jobs</h3>
             <p>Your job queue is currently empty.</p>
           </div>
@@ -238,12 +240,10 @@ export default function Jobs() {
                   </tr>
                 </thead>
                 <tbody>
-                  {jobs.map(job => (
+                  {jobs.map((job) => (
                     <tr key={job.id}>
                       <td>
-                        <span className="job-type">
-                          {job.type}
-                        </span>
+                        <span className="job-type">{job.type}</span>
                       </td>
                       <td className="job-status-cell">
                         {renderBadges(job)}
@@ -253,50 +253,38 @@ export default function Jobs() {
                         <span className="job-details-main">
                           {formatDetails(job)}
                           {job.attempts > 0 && (
-                            <span className="job-attempts">
-                              {' '}attempt {job.attempts}
-                            </span>
+                            <span className="job-attempts"> attempt {job.attempts}</span>
                           )}
                         </span>
                         {renderError(job)}
                       </td>
                       <td className="job-progress">{job.progress || '0%'}</td>
-                      <td className="job-time">
-                        {new Date(job.created_at).toLocaleString()}
-                      </td>
+                      <td className="job-time">{new Date(job.created_at).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <div className="job-cards">
-              {jobs.map(job => (
+              {jobs.map((job) => (
                 <div className="job-card" key={job.id}>
                   <div className="job-card-top">
-                    <span className="job-type">
-                      {job.type}
-                    </span>
+                    <span className="job-type">{job.type}</span>
                     {renderBadges(job)}
                   </div>
                   <div className="job-details">
                     {formatDetails(job)}
                     {job.attempts > 0 && (
-                      <span className="job-attempts">
-                        {' '}attempt {job.attempts}
-                      </span>
+                      <span className="job-attempts"> attempt {job.attempts}</span>
                     )}
                     {renderError(job)}
                   </div>
                   {isFailedDownload(job) && (
-                    <div className="job-card-actions">
-                      {renderRetryButton(job)}
-                    </div>
+                    <div className="job-card-actions">{renderRetryButton(job)}</div>
                   )}
                   <div className="job-card-bottom">
                     <span className="job-progress">{job.progress || '0%'}</span>
-                    <span className="job-time">
-                      {new Date(job.created_at).toLocaleString()}
-                    </span>
+                    <span className="job-time">{new Date(job.created_at).toLocaleString()}</span>
                   </div>
                 </div>
               ))}

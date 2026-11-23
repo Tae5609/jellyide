@@ -1,0 +1,29 @@
+{
+  "root": true,
+  "extends": [
+    "react-app",
+    "react-app/jest",
+    "prettier"
+  ],
+  "rules": {
+    "react-hooks/exhaustive-deps": "error",
+    "no-unused-vars": "error",
+    "eqeqeq": "error"
+  },
+  "overrides": [
+    {
+      "files": [
+        "src/**/*.test.js",
+        "src/testSetup/**"
+      ],
+      "rules": {
+        "testing-library/no-node-access": "off",
+        "testing-library/no-container": "off",
+        "testing-library/no-unnecessary-act": "off"
+      }
+    }
+  ],
+  "env": {
+    "es2020": true
+  }
+}

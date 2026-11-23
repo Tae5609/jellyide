@@ -7,22 +7,16 @@ RUFF_VERSION := 0.17.6
 
 .PHONY: fmt lint test build check
 
-## fmt: goimports + gofmt (backend), ruff format (python), prettier if present
+## fmt: goimports + gofmt (backend), ruff format (python), prettier (frontend)
 fmt:
 	cd backend && gofmt -w .
 	@command -v goimports >/dev/null 2>&1 \
 		&& cd backend && goimports -w -local yt-scraper . \
 		|| echo "goimports not installed; ran gofmt only"
 	ruff format backend
-	@if test -x frontend/node_modules/.bin/prettier; then \
-		cd frontend && ./node_modules/.bin/prettier --write .; \
-	elif command -v prettier >/dev/null 2>&1; then \
-		prettier --write frontend/src; \
-	else \
-		echo "prettier not present; skipping"; \
-	fi
+	cd frontend && npm run format
 
-## lint: golangci-lint (backend), ruff check (python), frontend lint if the script exists
+## lint: golangci-lint (backend), ruff check (python), eslint + prettier check (frontend)
 lint:
 	@v=$$(golangci-lint --version 2>/dev/null | awk '{print $$4}'); \
 	if [ -n "$$v" ] && [ "$$v" != "$(GOLANGCI_LINT_VERSION)" ]; then \
@@ -34,20 +28,12 @@ lint:
 		echo "ruff $(RUFF_VERSION) is required (found $$v)"; exit 1; \
 	fi
 	ruff check backend
-	@if grep -q '"lint"' frontend/package.json 2>/dev/null; then \
-		cd frontend && npm run lint; \
-	else \
-		echo "frontend lint script not present; skipping"; \
-	fi
+	cd frontend && npm run lint && npm run format:check
 
-## test: go test -race -cover (backend), frontend tests if they exist
+## test: go test -race -cover (backend), frontend tests with coverage
 test:
 	cd backend && go test -race -cover ./...
-	@if grep -q '"test"' frontend/package.json 2>/dev/null; then \
-		cd frontend && npm test; \
-	else \
-		echo "frontend test script not present; skipping"; \
-	fi
+	cd frontend && npm run test:ci
 
 ## build: backend and frontend builds
 build:

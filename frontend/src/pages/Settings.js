@@ -17,13 +17,12 @@ export default function Settings() {
 
   // With auth disabled the anonymous superuser is an admin, like the
   // backend treats it.
-  const isAdmin =
-    (providers && providers.enabled === false) || (user && user.is_admin);
+  const isAdmin = (providers && providers.enabled === false) || (user && user.is_admin);
 
   useEffect(() => {
     apiFetch('/config')
-      .then(r => r.json())
-      .then(data => {
+      .then((r) => r.json())
+      .then((data) => {
         const loaded = data.concurrent_limit || 2;
         setLimit(loaded);
         setSavedLimit(loaded);
@@ -43,14 +42,14 @@ export default function Settings() {
     try {
       const res = await apiFetch('/config', {
         method: 'POST',
-        body: JSON.stringify({ concurrent_limit: parsed, proxy })
+        body: JSON.stringify({ concurrent_limit: parsed, proxy }),
       });
       if (res.ok) {
         setSavedLimit(parsed);
-        showAlert("Settings Saved", "Your configuration has been updated successfully.");
+        showAlert('Settings Saved', 'Your configuration has been updated successfully.');
       }
     } catch (e) {
-      showAlert("Error", e.message);
+      showAlert('Error', e.message);
     }
     setSaving(false);
   };
@@ -64,50 +63,42 @@ export default function Settings() {
 
       <div className="card settings-card">
         <div className="settings-field">
-          <label className="settings-label">
-            Concurrent Downloads
-          </label>
-          <input 
+          <label className="settings-label">Concurrent Downloads</label>
+          <input
             className="settings-input"
-            type="number" 
-            min="1" max="10"
-            value={limit} 
-            onChange={e => {
+            type="number"
+            min="1"
+            max="10"
+            value={limit}
+            onChange={(e) => {
               setLimit(e.target.value);
               setLimitError('');
-            }} 
+            }}
             disabled={!isAdmin}
           />
-          {limitError && (
-            <p className="settings-msg error">
-              {limitError}
-            </p>
-          )}
-          <p className="settings-hint">
-            Number of simultaneous YouTube downloads.
-          </p>
+          {limitError && <p className="settings-msg error">{limitError}</p>}
+          <p className="settings-hint">Number of simultaneous YouTube downloads.</p>
         </div>
 
         <div className="settings-field-spaced">
           <label className="settings-label">
-            Proxy URL <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>
+            Proxy URL{' '}
+            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>
           </label>
-          <input 
+          <input
             className="settings-input"
-            type="text" 
+            type="text"
             placeholder="http://user:pass@host:port"
-            value={proxy} 
-            onChange={e => setProxy(e.target.value)} 
+            value={proxy}
+            onChange={(e) => setProxy(e.target.value)}
             disabled={!isAdmin}
           />
-          <p className="settings-hint">
-            Useful for bypassing regional YouTube blocks.
-          </p>
+          <p className="settings-hint">Useful for bypassing regional YouTube blocks.</p>
         </div>
 
         {isAdmin ? (
           <button className="btn-primary settings-save" onClick={save} disabled={saving}>
-            {saving ? "Saving..." : "Save Configuration"}
+            {saving ? 'Saving...' : 'Save Configuration'}
           </button>
         ) : (
           <p className="settings-hint" style={{ marginTop: '12px' }}>
@@ -155,8 +146,8 @@ function SyncPolicyCard() {
 
   useEffect(() => {
     apiFetch('/admin/settings/sync')
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
         if (data && data.policy) setPolicy(data.policy);
       })
       .catch(() => {
@@ -170,7 +161,7 @@ function SyncPolicyCard() {
     try {
       const res = await apiFetch('/admin/settings/sync', {
         method: 'PUT',
-        body: JSON.stringify({ policy })
+        body: JSON.stringify({ policy }),
       });
       if (res.ok) {
         setMsg({ type: 'success', text: 'Sync policy updated.' });
@@ -197,7 +188,7 @@ function SyncPolicyCard() {
       {policy !== null && (
         <>
           <div className="registration-options">
-            {SYNC_POLICIES.map(o => (
+            {SYNC_POLICIES.map((o) => (
               <label
                 key={o.value}
                 className={`registration-option ${policy === o.value ? 'selected' : ''}`}
@@ -250,8 +241,8 @@ function RegistrationCard() {
 
   useEffect(() => {
     apiFetch('/admin/settings')
-      .then(r => r.json())
-      .then(data => {
+      .then((r) => r.json())
+      .then((data) => {
         if (data && data.registration_mode) setMode(data.registration_mode);
       })
       .catch(() => {
@@ -265,7 +256,7 @@ function RegistrationCard() {
     try {
       const res = await apiFetch('/admin/settings', {
         method: 'PUT',
-        body: JSON.stringify({ registration_mode: mode })
+        body: JSON.stringify({ registration_mode: mode }),
       });
       if (res.ok) {
         setMsg({ type: 'success', text: 'Registration mode updated.' });
@@ -292,7 +283,7 @@ function RegistrationCard() {
       {mode !== null && (
         <>
           <div className="registration-options">
-            {REGISTRATION_MODES.map(o => (
+            {REGISTRATION_MODES.map((o) => (
               <label
                 key={o.value}
                 className={`registration-option ${mode === o.value ? 'selected' : ''}`}
@@ -348,8 +339,8 @@ function ChangePasswordCard() {
         method: 'POST',
         body: JSON.stringify({
           current_password: current,
-          new_password: next
-        })
+          new_password: next,
+        }),
       });
       if (res.ok) {
         setMsg({ type: 'success', text: 'Password changed successfully.' });
@@ -387,7 +378,7 @@ function ChangePasswordCard() {
             type="password"
             autoComplete="current-password"
             value={current}
-            onChange={e => setCurrent(e.target.value)}
+            onChange={(e) => setCurrent(e.target.value)}
           />
         </div>
         <div className="settings-field">
@@ -400,11 +391,9 @@ function ChangePasswordCard() {
             type="password"
             autoComplete="new-password"
             value={next}
-            onChange={e => setNext(e.target.value)}
+            onChange={(e) => setNext(e.target.value)}
           />
-          <p className="settings-hint">
-            At least 8 characters.
-          </p>
+          <p className="settings-hint">At least 8 characters.</p>
         </div>
         <div className="settings-field">
           <label className="settings-label" htmlFor="pw-confirm">
@@ -416,11 +405,11 @@ function ChangePasswordCard() {
             type="password"
             autoComplete="new-password"
             value={confirm}
-            onChange={e => setConfirm(e.target.value)}
+            onChange={(e) => setConfirm(e.target.value)}
           />
         </div>
         <button className="btn-primary settings-save" type="submit" disabled={saving}>
-          {saving ? "Saving..." : "Change Password"}
+          {saving ? 'Saving...' : 'Change Password'}
         </button>
       </form>
     </div>
@@ -529,7 +518,7 @@ function YtDlpCard() {
     try {
       const res = await apiFetch('/admin/ytdlp/update', {
         method: 'POST',
-        body: JSON.stringify({ force })
+        body: JSON.stringify({ force }),
       });
       if (res.ok || res.status === 202) {
         setMsg({ type: 'success', text: 'Update job started...' });
@@ -560,7 +549,7 @@ function YtDlpCard() {
   const handleRollback = async () => {
     const confirmed = await showConfirm(
       'Roll back yt-dlp?',
-      'Do you want to restore the previous yt-dlp binary? This will undo the latest update.'
+      'Do you want to restore the previous yt-dlp binary? This will undo the latest update.',
     );
     if (!confirmed) return;
 
@@ -595,8 +584,8 @@ function YtDlpCard() {
         body: JSON.stringify({
           auto_update: autoUpdate,
           interval_hours: Number(intervalHours),
-          channel
-        })
+          channel,
+        }),
       });
       if (res.ok) {
         const json = await res.json();
@@ -630,37 +619,84 @@ function YtDlpCard() {
 
   return (
     <div className="card settings-card" data-testid="ytdlp-card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h3 className="settings-card-title" style={{ margin: 0 }}>yt-dlp Version</h3>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '16px',
+        }}
+      >
+        <h3 className="settings-card-title" style={{ margin: 0 }}>
+          yt-dlp Version
+        </h3>
         {data && data.update_available && (
-          <span className="badge running" style={{ fontWeight: 600 }}>Update available</span>
+          <span className="badge running" style={{ fontWeight: 600 }}>
+            Update available
+          </span>
         )}
       </div>
 
       {msg && <p className={`settings-msg ${msg.type}`}>{msg.text}</p>}
 
       {data && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px', background: 'var(--bg-main)', padding: '12px', borderRadius: '8px' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: '12px',
+            marginBottom: '16px',
+            background: 'var(--bg-main)',
+            padding: '12px',
+            borderRadius: '8px',
+          }}
+        >
           <div>
-            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>Installed Version</div>
+            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>
+              Installed Version
+            </div>
             <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{data.version || 'None'}</div>
-            <div className="settings-hint" style={{ fontSize: '12px' }}>{data.managed ? 'Managed' : 'System'} ({data.path})</div>
+            <div className="settings-hint" style={{ fontSize: '12px' }}>
+              {data.managed ? 'Managed' : 'System'} ({data.path})
+            </div>
           </div>
           <div>
-            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>Latest Version</div>
-            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{data.latest_version || 'Unknown'}</div>
-            <div className="settings-hint" style={{ fontSize: '12px' }}>Channel: {data.channel}</div>
+            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>
+              Latest Version
+            </div>
+            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>
+              {data.latest_version || 'Unknown'}
+            </div>
+            <div className="settings-hint" style={{ fontSize: '12px' }}>
+              Channel: {data.channel}
+            </div>
           </div>
           <div>
-            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>Last Check</div>
-            <div style={{ fontSize: '13px' }}>{data.last_check ? new Date(data.last_check).toLocaleString() : 'Never'}</div>
-            {data.last_result && <div className="settings-hint" style={{ fontSize: '12px' }}>{data.last_result}</div>}
+            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>
+              Last Check
+            </div>
+            <div style={{ fontSize: '13px' }}>
+              {data.last_check ? new Date(data.last_check).toLocaleString() : 'Never'}
+            </div>
+            {data.last_result && (
+              <div className="settings-hint" style={{ fontSize: '12px' }}>
+                {data.last_result}
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Buttons */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginBottom: '20px' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '10px',
+          alignItems: 'center',
+          marginBottom: '20px',
+        }}
+      >
         <button className="btn-secondary" onClick={handleCheck} disabled={checking || updating}>
           {checking ? 'Checking...' : 'Check for updates'}
         </button>
@@ -669,16 +705,16 @@ function YtDlpCard() {
           {updating ? 'Updating...' : 'Update now'}
         </button>
 
-        <button className="btn-secondary" onClick={handleRollback} disabled={!data || !data.has_rollback || rollingBack || updating}>
+        <button
+          className="btn-secondary"
+          onClick={handleRollback}
+          disabled={!data || !data.has_rollback || rollingBack || updating}
+        >
           {rollingBack ? 'Rolling back...' : 'Roll back'}
         </button>
 
         <label className="settings-checkbox-label" style={{ marginLeft: '6px' }}>
-          <input
-            type="checkbox"
-            checked={force}
-            onChange={e => setForce(e.target.checked)}
-          />
+          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
           <span style={{ fontSize: '13px' }}>Force reinstall</span>
         </label>
       </div>
@@ -690,23 +726,32 @@ function YtDlpCard() {
           <input
             type="checkbox"
             checked={autoUpdate}
-            onChange={e => setAutoUpdate(e.target.checked)}
+            onChange={(e) => setAutoUpdate(e.target.checked)}
           />
           <span>Enable auto-update</span>
         </label>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap: '14px',
+          marginBottom: '16px',
+        }}
+      >
         <div className="settings-field">
           <label className="settings-label">Update Interval</label>
           <select
             className="settings-input"
             value={intervalHours}
-            onChange={e => setIntervalHours(Number(e.target.value))}
+            onChange={(e) => setIntervalHours(Number(e.target.value))}
             disabled={!autoUpdate}
           >
-            {YTDLP_INTERVAL_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            {YTDLP_INTERVAL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
         </div>
@@ -716,7 +761,7 @@ function YtDlpCard() {
           <select
             className="settings-input"
             value={channel}
-            onChange={e => setChannel(e.target.value)}
+            onChange={(e) => setChannel(e.target.value)}
           >
             <option value="stable">stable</option>
             <option value="nightly">nightly</option>
@@ -725,12 +770,24 @@ function YtDlpCard() {
       </div>
 
       {channel === 'nightly' && (
-        <p className="settings-msg error" style={{ marginBottom: '16px', background: 'rgba(234, 179, 8, 0.1)', color: '#facc15', borderColor: 'rgba(234, 179, 8, 0.3)' }}>
+        <p
+          className="settings-msg error"
+          style={{
+            marginBottom: '16px',
+            background: 'rgba(234, 179, 8, 0.1)',
+            color: '#facc15',
+            borderColor: 'rgba(234, 179, 8, 0.3)',
+          }}
+        >
           Warning: Nightly builds receive daily fixes but may be unstable.
         </p>
       )}
 
-      <button className="btn-primary settings-save" onClick={handleSaveSettings} disabled={savingSettings}>
+      <button
+        className="btn-primary settings-save"
+        onClick={handleSaveSettings}
+        disabled={savingSettings}
+      >
         {savingSettings ? 'Saving...' : 'Save Settings'}
       </button>
     </div>

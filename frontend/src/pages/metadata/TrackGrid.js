@@ -1,12 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  FIELDS,
-  INT_MAX,
-  currentValue,
-  formatDuration,
-  originalValue,
-} from './useEditorState';
+import { FIELDS, INT_MAX, currentValue, formatDuration, originalValue } from './useEditorState';
 
 // SyncChip marks a track whose sync state needs attention (T16): a
 // conflict (changed outside JellyIDE) or a missing file. Clicking it goes
@@ -214,7 +208,8 @@ export default function TrackGrid({
     onSelectToggle(trackId);
   };
 
-  const commit = () => (focus && tracks[focus.row] ? onCommitEdit(tracks[focus.row].id, focus.col, draft) : true);
+  const commit = () =>
+    focus && tracks[focus.row] ? onCommitEdit(tracks[focus.row].id, focus.col, draft) : true;
 
   const moveFocus = (dir) => {
     if (!focus) return null;
@@ -314,12 +309,18 @@ export default function TrackGrid({
 
   // ---- table ---------------------------------------------------------------
 
-  const dirtyTracks = new Set(
-    Object.keys(edits).map((k) => k.slice(0, k.indexOf('.')))
-  );
+  const dirtyTracks = new Set(Object.keys(edits).map((k) => k.slice(0, k.indexOf('.'))));
 
   const colHeader = (f) => (
-    <th key={f.key} className="md-th" title={visibleCols.length === 1 ? 'At least one column must stay visible' : 'Toggle via the Columns menu'}>
+    <th
+      key={f.key}
+      className="md-th"
+      title={
+        visibleCols.length === 1
+          ? 'At least one column must stay visible'
+          : 'Toggle via the Columns menu'
+      }
+    >
       {f.label}
     </th>
   );

@@ -4,7 +4,16 @@ import { useAuth } from '../auth/AuthContext';
 import { apiFetch } from '../api';
 
 const Logo = () => (
-  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="28"
+    height="28"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="var(--accent)"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M9 18V5l12-2v13" />
     <circle cx="6" cy="18" r="3" />
     <circle cx="18" cy="16" r="3" />
@@ -69,8 +78,7 @@ export default function Setup() {
         </div>
 
         <p className="login-hint">
-          Find the setup token in the server logs:{' '}
-          <code>docker logs jelly-ide</code>
+          Find the setup token in the server logs: <code>docker logs jelly-ide</code>
         </p>
 
         {error && (
@@ -140,11 +148,7 @@ export default function Setup() {
               required
             />
           </div>
-          <button
-            type="submit"
-            className="btn-primary login-submit"
-            disabled={submitting}
-          >
+          <button type="submit" className="btn-primary login-submit" disabled={submitting}>
             {submitting && <span className="spinner" aria-hidden="true" />}
             {submitting ? 'Setting up…' : 'Complete setup'}
           </button>

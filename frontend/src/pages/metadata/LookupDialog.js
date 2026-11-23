@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../api';
 import { errorFromResponse } from './useEditorState';
 
@@ -16,6 +16,7 @@ function textOf(v) {
 // release cover URL to the parent.
 export default function LookupDialog({ albumId, album, onClose, onApply, onError }) {
   const defaultQuery = `${album.artist || ''} ${album.title || ''}`.trim();
+  const initialQuery = useRef(defaultQuery);
   const [query, setQuery] = useState(defaultQuery);
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -30,7 +31,7 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
       setRelease(null);
       try {
         const res = await apiFetch(
-          `/metadata/lookup/search?album_id=${encodeURIComponent(albumId)}&q=${encodeURIComponent(q)}`
+          `/metadata/lookup/search?album_id=${encodeURIComponent(albumId)}&q=${encodeURIComponent(q)}`,
         );
         if (!res.ok) throw new Error(await errorFromResponse(res));
         setResults(await res.json());
@@ -40,18 +41,18 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
         setSearching(false);
       }
     },
-    [albumId]
+    [albumId],
   );
 
   useEffect(() => {
-    search(defaultQuery);
-  }, []);
+    search(initialQuery.current);
+  }, [search]);
 
   const openRelease = async (mbid) => {
     setLoadingRelease(true);
     try {
       const res = await apiFetch(
-        `/metadata/lookup/release/${mbid}?album_id=${encodeURIComponent(albumId)}`
+        `/metadata/lookup/release/${mbid}?album_id=${encodeURIComponent(albumId)}`,
       );
       if (!res.ok) throw new Error(await errorFromResponse(res));
       const data = await res.json();
@@ -162,9 +163,7 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
                     </span>
                   </button>
                 ))}
-                {results.length === 0 && (
-                  <p className="lookup-status">No releases found.</p>
-                )}
+                {results.length === 0 && <p className="lookup-status">No releases found.</p>}
               </div>
             )}
           </div>
@@ -173,7 +172,11 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
         {release && (
           <div className="dialog-body">
             <div className="lookup-release-head">
-              <button type="button" className="btn-secondary btn-sm" onClick={() => setRelease(null)}>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => setRelease(null)}
+              >
                 ← Back to results
               </button>
               <div className="lookup-release-title">
@@ -191,10 +194,7 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
                 const rowAll = fieldKeys.length > 0 && fieldKeys.every((f) => row[f]);
                 const low = m.confidence < LOW_CONFIDENCE;
                 return (
-                  <div
-                    key={m.track_id}
-                    className={`lookup-row ${low ? 'low-confidence' : ''}`}
-                  >
+                  <div key={m.track_id} className={`lookup-row ${low ? 'low-confidence' : ''}`}>
                     <label className="lookup-row-include">
                       <input
                         type="checkbox"
@@ -202,8 +202,13 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
                         disabled={fieldKeys.length === 0}
                         onChange={() => toggleRow(m.track_id)}
                       />
-                      <span className="lookup-current">{textOf(m.current && m.current.title) || '—'}</span>
-                      <span className={`lookup-confidence ${low ? 'low' : ''}`} title={low ? 'Low match confidence' : 'Match confidence'}>
+                      <span className="lookup-current">
+                        {textOf(m.current && m.current.title) || '—'}
+                      </span>
+                      <span
+                        className={`lookup-confidence ${low ? 'low' : ''}`}
+                        title={low ? 'Low match confidence' : 'Match confidence'}
+                      >
                         {Math.round(m.confidence * 100)}%
                       </span>
                     </label>
@@ -216,7 +221,9 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
                             onChange={() => toggleField(m.track_id, f)}
                           />
                           <span className="lookup-field-name">{f}</span>
-                          <span className="lookup-field-old">{textOf(m.current && m.current[f]) || '—'}</span>
+                          <span className="lookup-field-old">
+                            {textOf(m.current && m.current[f]) || '—'}
+                          </span>
                           <span className="lookup-arrow">→</span>
                           <span className="lookup-field-new">{textOf(m.proposed[f])}</span>
                         </label>

@@ -3,11 +3,7 @@
 // a protocol-relative URL, and anything else may be an absolute URL or
 // junk). Everything else falls back to the given path.
 export function safeRedirectFrom(from, fallback = '/downloads') {
-  if (
-    typeof from === 'string' &&
-    from.startsWith('/') &&
-    !from.startsWith('//')
-  ) {
+  if (typeof from === 'string' && from.startsWith('/') && !from.startsWith('//')) {
     return from;
   }
   return fallback;

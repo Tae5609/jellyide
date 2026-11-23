@@ -236,10 +236,7 @@ export function getDiff(state) {
   FIELDS.forEach((f, i) => {
     fOrder[f.key] = i;
   });
-  rows.sort(
-    (a, b) =>
-      (tOrder[a.trackId] - tOrder[b.trackId]) || (fOrder[a.field] - fOrder[b.field])
-  );
+  rows.sort((a, b) => tOrder[a.trackId] - tOrder[b.trackId] || fOrder[a.field] - fOrder[b.field]);
   return rows;
 }
 
@@ -275,11 +272,7 @@ export function buildPatchEdits(state, collisionChoices = {}) {
 }
 
 export function useEditorState(initialTracks = []) {
-  const [state, dispatch] = useReducer(
-    editorReducer,
-    initialTracks,
-    initialEditorState
-  );
+  const [state, dispatch] = useReducer(editorReducer, initialTracks, initialEditorState);
   return { state, dispatch };
 }
 
@@ -290,10 +283,7 @@ export function useEditorState(initialTracks = []) {
 const JOB_POLL_INTERVAL_MS = 1500;
 const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
-export async function waitForJob(
-  jobId,
-  sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-) {
+export async function waitForJob(jobId, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
   const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
   for (;;) {
     const res = await apiFetch('/jobs');

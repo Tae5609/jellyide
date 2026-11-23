@@ -42,7 +42,7 @@ async function renderLibrary(fetchImpl) {
             <Route path="/library/:artistId" element={<Library />} />
           </Routes>
         </ModalProvider>
-      </MemoryRouter>
+      </MemoryRouter>,
     );
   });
   return {
@@ -52,20 +52,13 @@ async function renderLibrary(fetchImpl) {
 }
 
 const scanButton = (container) =>
-  Array.from(container.querySelectorAll('button')).find(
-    (b) => b.textContent === 'SCAN'
-  );
+  Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'SCAN');
 
 async function clickScan(container) {
   await act(async () => {
-    scanButton(container).dispatchEvent(
-      new MouseEvent('click', { bubbles: true })
-    );
+    scanButton(container).dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
 }
-
-const artistsFetches = (fetchMock) =>
-  fetchMock.mock.calls.filter((c) => c[0] === '/api/library/artists');
 
 // Renders the Library page with a fetch mock whose scan job can be
 // flipped to a terminal status between polls, and whose artist list
@@ -84,8 +77,7 @@ async function renderScanWatch({ finalArtist = 'New Artist' } = {}) {
   const fetchImpl = jest.fn(async (url) => {
     if (url === '/api/library/artists') {
       artistFetchCount += 1;
-      const list =
-        artistFetchCount === 1 ? [] : [{ id: 'a1', name: finalArtist }];
+      const list = artistFetchCount === 1 ? [] : [{ id: 'a1', name: finalArtist }];
       return new Response(JSON.stringify(list), { status: 200 });
     }
     if (url === '/api/library/scan') {
@@ -107,9 +99,9 @@ async function renderScanWatch({ finalArtist = 'New Artist' } = {}) {
     }
     return new Response('[]', { status: 200 });
   });
-  const rendered = await renderLibrary(fetchImpl);
+  const view = await renderLibrary(fetchImpl);
   return {
-    ...rendered,
+    ...view,
     finishScan: (status) => {
       newJobStatus = status;
     },
@@ -136,8 +128,7 @@ async function renderTieScanWatch({ staleFirst = true } = {}) {
   const fetchImpl = jest.fn(async (url) => {
     if (url === '/api/library/artists') {
       artistFetchCount += 1;
-      const list =
-        artistFetchCount === 1 ? [] : [{ id: 'a1', name: 'Tie Artist' }];
+      const list = artistFetchCount === 1 ? [] : [{ id: 'a1', name: 'Tie Artist' }];
       return new Response(JSON.stringify(list), { status: 200 });
     }
     if (url === '/api/library/scan') {
@@ -157,9 +148,9 @@ async function renderTieScanWatch({ staleFirst = true } = {}) {
     }
     return new Response('[]', { status: 200 });
   });
-  const rendered = await renderLibrary(fetchImpl);
+  const view = await renderLibrary(fetchImpl);
   return {
-    ...rendered,
+    ...view,
     finishScan: (status) => {
       newJobStatus = status;
     },
@@ -175,8 +166,7 @@ describe('Library artist refetch after scan', () => {
 
   test('refetches the artist list when the scan job completes', async () => {
     jest.useFakeTimers();
-    const { container, unmount, finishScan, artistFetchCount } =
-      await renderScanWatch();
+    const { container, unmount, finishScan, artistFetchCount } = await renderScanWatch();
 
     expect(artistFetchCount()).toBe(1); // mount fetch
 
@@ -202,8 +192,9 @@ describe('Library artist refetch after scan', () => {
 
   test('refetches the artist list when the scan job fails', async () => {
     jest.useFakeTimers();
-    const { container, unmount, finishScan, artistFetchCount } =
-      await renderScanWatch({ finalArtist: 'Partial Artist' });
+    const { container, unmount, finishScan, artistFetchCount } = await renderScanWatch({
+      finalArtist: 'Partial Artist',
+    });
 
     await clickScan(container);
     expect(artistFetchCount()).toBe(1);
@@ -229,8 +220,9 @@ describe('Library scan settled on tied created_at', () => {
       staleFirst ? 'first' : 'last'
     } in /jobs`, async () => {
       jest.useFakeTimers();
-      const { container, unmount, finishScan, artistFetchCount } =
-        await renderTieScanWatch({ staleFirst });
+      const { container, unmount, finishScan, artistFetchCount } = await renderTieScanWatch({
+        staleFirst,
+      });
 
       await clickScan(container);
       // Both jobs share a created_at. The tiebreak must pick the same
@@ -263,32 +255,24 @@ describe('Library scan feedback', () => {
 
   test('shows an error modal instead of alert() when the scan cannot start', async () => {
     const alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
-    const { container, unmount } = await renderLibrary(
-      makeFetch({ scanStatus: 500 })
-    );
+    const { container, unmount } = await renderLibrary(makeFetch({ scanStatus: 500 }));
 
     await clickScan(container);
 
     expect(alertSpy).not.toHaveBeenCalled();
     expect(container.querySelector('.modal-title').textContent).toBe('Error');
-    expect(container.querySelector('.modal-message').textContent).toBe(
-      'Failed to start scan'
-    );
+    expect(container.querySelector('.modal-message').textContent).toBe('Failed to start scan');
     await unmount();
   });
 
   test('shows a modal instead of alert() when the scan starts', async () => {
     const alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
-    const { container, unmount } = await renderLibrary(
-      makeFetch({ scanStatus: 202 })
-    );
+    const { container, unmount } = await renderLibrary(makeFetch({ scanStatus: 202 }));
 
     await clickScan(container);
 
     expect(alertSpy).not.toHaveBeenCalled();
-    expect(container.querySelector('.modal-title').textContent).toBe(
-      'Library scan started'
-    );
+    expect(container.querySelector('.modal-title').textContent).toBe('Library scan started');
     await unmount();
   });
 });
