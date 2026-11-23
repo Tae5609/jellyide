@@ -37,16 +37,16 @@ export default function Library() {
         navigate(`/library/${list[0].id}`, { replace: true });
       }
     } catch (e) {
-      console.error("Failed to load artists", e);
+      console.error('Failed to load artists', e);
     }
   };
 
   useEffect(() => {
     if (artistId) {
       apiFetch(`/library/artists/${artistId}/albums`)
-        .then(r => r.json())
-        .then(data => setAlbums(data || []))
-        .catch(err => console.error("Error loading albums", err));
+        .then((r) => r.json())
+        .then((data) => setAlbums(data || []))
+        .catch((err) => console.error('Error loading albums', err));
     }
   }, [artistId]);
 
@@ -84,17 +84,15 @@ export default function Library() {
     } catch (e) {
       return false; // transient network error: keep watching
     }
-    const scanJobs = jobs.filter(j => j.type === 'scan');
+    const scanJobs = jobs.filter((j) => j.type === 'scan');
     if (scanJobs.length === 0) return false;
     if (scanBaselineRef.current === null) {
-      scanBaselineRef.current = new Map(scanJobs.map(j => [j.id, j.status]));
+      scanBaselineRef.current = new Map(scanJobs.map((j) => [j.id, j.status]));
       const newest = newestScanJob(scanJobs);
       return SCAN_TERMINAL.includes(newest.status);
     }
     return scanJobs.some(
-      j =>
-        SCAN_TERMINAL.includes(j.status) &&
-        scanBaselineRef.current.get(j.id) !== j.status
+      (j) => SCAN_TERMINAL.includes(j.status) && scanBaselineRef.current.get(j.id) !== j.status,
     );
   };
 
@@ -119,8 +117,11 @@ export default function Library() {
     setScanning(true);
     try {
       const res = await apiFetch('/library/scan', { method: 'POST' });
-      if (!res.ok) throw new Error("Failed to start scan");
-      showAlert('Library scan started', 'The scan runs in the background. Follow its progress in the Jobs tab.');
+      if (!res.ok) throw new Error('Failed to start scan');
+      showAlert(
+        'Library scan started',
+        'The scan runs in the background. Follow its progress in the Jobs tab.',
+      );
       // Keep the button busy until the scan job reaches a terminal
       // state, then refetch so newly scanned artists appear.
       watchScanCompletion();
@@ -135,11 +136,9 @@ export default function Library() {
       {/* Sidebar: Artist List */}
       <div className="artist-list">
         <div className="artist-list-head">
-          <h3 className="artist-list-title">
-            Artists
-          </h3>
-          <button 
-            className="btn-secondary" 
+          <h3 className="artist-list-title">Artists</h3>
+          <button
+            className="btn-secondary"
             style={{ padding: '4px 8px', fontSize: 10, fontWeight: 700 }}
             onClick={triggerScan}
             disabled={scanning}
@@ -148,7 +147,7 @@ export default function Library() {
           </button>
         </div>
         <div className="artist-list-scroll">
-          {artists.map(artist => (
+          {artists.map((artist) => (
             <Link
               key={artist.id}
               to={`/library/${artist.id}`}
@@ -169,24 +168,24 @@ export default function Library() {
           </div>
         ) : (
           <div className="album-grid">
-            {albums.map(album => (
-              <Link 
-                key={album.id} 
+            {albums.map((album) => (
+              <Link
+                key={album.id}
                 to={`/library/${artistId}/${album.id}`}
                 className="card album-link"
-                onMouseEnter={e => {
+                onMouseEnter={(e) => {
                   e.currentTarget.style.transform = 'translateY(-4px)';
                   e.currentTarget.style.borderColor = 'var(--accent)';
                 }}
-                onMouseLeave={e => {
+                onMouseLeave={(e) => {
                   e.currentTarget.style.transform = 'none';
                   e.currentTarget.style.borderColor = 'var(--border)';
                 }}
               >
                 <div className="album-cover">
                   {album.cover_art ? (
-                    <img 
-                      src={window.location.origin + album.cover_art} 
+                    <img
+                      src={window.location.origin + album.cover_art}
                       alt=""
                       onError={(e) => {
                         e.target.onerror = null;
@@ -198,12 +197,8 @@ export default function Library() {
                     <span style={{ fontSize: 40 }}>🎵</span>
                   )}
                 </div>
-                <div className="album-title">
-                  {album.title}
-                </div>
-                <div className="album-artist">
-                  {album.artist}
-                </div>
+                <div className="album-title">{album.title}</div>
+                <div className="album-artist">{album.artist}</div>
               </Link>
             ))}
           </div>

@@ -4,13 +4,7 @@ import { PREVIEW_FIELDS } from './useEditorState';
 // FindReplacePanel runs the existing replace / prefix / suffix / regex
 // operations on any text field. Operations are previewed server-side
 // (POST /metadata/preview) and the result is staged as pending edits.
-export default function FindReplacePanel({
-  trackIds,
-  analysis,
-  onPreview,
-  onNotice,
-  onError,
-}) {
+export default function FindReplacePanel({ trackIds, analysis, onPreview, onNotice, onError }) {
   const [field, setField] = useState('title');
   const [action, setAction] = useState('replace');
   const [target, setTarget] = useState('');
@@ -69,11 +63,7 @@ export default function FindReplacePanel({
             placeholder="Target string"
           />
         )}
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="New value"
-        />
+        <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="New value" />
         <button
           type="button"
           className="btn-secondary"
@@ -106,7 +96,7 @@ export default function FindReplacePanel({
               </div>
             ))}
 
-            {(!analysis.suggestions?.length) && (
+            {!analysis.suggestions?.length && (
               <p className="suggestion-empty">No significant patterns detected.</p>
             )}
           </div>

@@ -224,7 +224,7 @@ export default function MetadataPage() {
   const handleDeleteAlbum = async () => {
     const ok = await showConfirm(
       'Delete album?',
-      'Are you sure you want to delete this album and all its tracks from the database? This will NOT delete files from disk.'
+      'Are you sure you want to delete this album and all its tracks from the database? This will NOT delete files from disk.',
     );
     if (!ok) return;
     try {
@@ -239,7 +239,7 @@ export default function MetadataPage() {
   const handleDeleteTrack = async (trackId) => {
     const ok = await showConfirm(
       'Delete track?',
-      'Delete this track from the database? (File will stay on disk)'
+      'Delete this track from the database? (File will stay on disk)',
     );
     if (!ok) return;
     try {
@@ -261,7 +261,10 @@ export default function MetadataPage() {
       if (t === '') {
         value = null;
       } else if (!/^\d+$/.test(t) || Number(t) > INT_MAX[field]) {
-        showAlert('Invalid value', `${def.label} must be a whole number between 0 and ${INT_MAX[field]}.`);
+        showAlert(
+          'Invalid value',
+          `${def.label} must be a whole number between 0 and ${INT_MAX[field]}.`,
+        );
         return false;
       } else {
         value = Number(t);
@@ -328,11 +331,7 @@ export default function MetadataPage() {
 
   const doFillDown = () => {
     if (!focus || !state.tracks[focus.row]) return;
-    const entries = fillDownEntries(
-      state,
-      state.tracks[focus.row].id,
-      focus.col
-    );
+    const entries = fillDownEntries(state, state.tracks[focus.row].id, focus.col);
     if (entries.length > 0) dispatch({ type: 'SET_EDITS', entries });
   };
 
@@ -433,9 +432,7 @@ export default function MetadataPage() {
           setConflictInfo({ conflicts: data.conflicts, edits: patchEdits });
           return;
         }
-        throw new Error(
-          data && data.error ? data.error : await errorFromResponse(res)
-        );
+        throw new Error(data && data.error ? data.error : await errorFromResponse(res));
       }
       if (!res.ok) throw new Error(await errorFromResponse(res));
       const { job_id } = await res.json();
@@ -557,7 +554,7 @@ export default function MetadataPage() {
       // Capture Tab (cell navigation) only while a cell is focused and not
       // being edited; otherwise native tab order reaches the page controls.
       cellFocused: Boolean(focus && !editing),
-    }
+    },
   );
 
   if (!albumId) return null;
@@ -683,9 +680,7 @@ export default function MetadataPage() {
           onExitEdit={() => setEditing(false)}
           onCommitEdit={handleCommitEdit}
           onSelectToggle={(id) => dispatch({ type: 'SELECT', trackId: id })}
-          onSelectRange={(fromId, toId) =>
-            dispatch({ type: 'SELECT_RANGE', fromId, toId })
-          }
+          onSelectRange={(fromId, toId) => dispatch({ type: 'SELECT_RANGE', fromId, toId })}
           onSelectAll={() => dispatch({ type: 'SELECT_ALL' })}
           onClearSelection={() => dispatch({ type: 'CLEAR_SELECTION' })}
           onFillDown={doFillDown}
@@ -846,9 +841,7 @@ export default function MetadataPage() {
                             <td className="review-old">
                               {r.from === null || r.from === undefined ? '—' : r.from}
                             </td>
-                            <td className="review-new">
-                              {r.to === null ? '∅ (cleared)' : r.to}
-                            </td>
+                            <td className="review-new">{r.to === null ? '∅ (cleared)' : r.to}</td>
                           </tr>
                         );
                       })}
@@ -874,7 +867,9 @@ export default function MetadataPage() {
                             >
                               <option value="suffix">Add a number (file keeps a copy name)</option>
                               <option value="skip">Skip the rename (keep the file name)</option>
-                              <option value="replace">Replace the file (old one goes to trash)</option>
+                              <option value="replace">
+                                Replace the file (old one goes to trash)
+                              </option>
                             </select>
                           </td>
                         </tr>

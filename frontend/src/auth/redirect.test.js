@@ -17,14 +17,12 @@ describe('safeRedirectFrom', () => {
     expect(safeRedirectFrom(from)).toBe('/downloads');
   });
 
-  test.each([
-    ['/'],
-    ['/downloads'],
-    ['/settings'],
-    ['/library/12/34'],
-  ])('accepts internal path %p', (from) => {
-    expect(safeRedirectFrom(from)).toBe(from);
-  });
+  test.each([['/'], ['/downloads'], ['/settings'], ['/library/12/34']])(
+    'accepts internal path %p',
+    (from) => {
+      expect(safeRedirectFrom(from)).toBe(from);
+    },
+  );
 
   test('uses the custom fallback for rejected targets', () => {
     expect(safeRedirectFrom('//evil.com', '/jobs')).toBe('/jobs');

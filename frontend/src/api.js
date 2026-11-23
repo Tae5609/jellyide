@@ -9,8 +9,7 @@
 //
 // Returns the Response; callers keep their own .json() handling.
 export async function apiFetch(path, opts = {}) {
-  const url =
-    path.startsWith('/') && !path.startsWith('/api') ? `/api${path}` : path;
+  const url = path.startsWith('/') && !path.startsWith('/api') ? `/api${path}` : path;
   const headers = {
     'X-Requested-With': 'XMLHttpRequest',
     ...(opts.headers || {}),
@@ -23,11 +22,7 @@ export async function apiFetch(path, opts = {}) {
     ...opts,
     headers,
   });
-  if (
-    res.status === 401 &&
-    url !== '/api/auth/me' &&
-    url !== '/api/auth/login'
-  ) {
+  if (res.status === 401 && url !== '/api/auth/me' && url !== '/api/auth/login') {
     window.dispatchEvent(new Event('auth:unauthorized'));
   }
   return res;

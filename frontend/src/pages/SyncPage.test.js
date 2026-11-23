@@ -41,13 +41,23 @@ const missingList = [
     duration: 100,
     size: 10,
     candidates: [
-      { track_id: 'c9', path: '/music/Artist/Alb/Gone Copy.flac', title: 'Gone Copy', duration: 100 },
+      {
+        track_id: 'c9',
+        path: '/music/Artist/Alb/Gone Copy.flac',
+        title: 'Gone Copy',
+        duration: 100,
+      },
     ],
   },
 ];
 
 const trashList = [
-  { id: 'tr1', original_path: '/music/old.flac', trash_path: '/trash/x.flac', created_at: '2026-01-01 00:00:00' },
+  {
+    id: 'tr1',
+    original_path: '/music/old.flac',
+    trash_path: '/trash/x.flac',
+    created_at: '2026-01-01 00:00:00',
+  },
 ];
 
 function mockSyncApi() {
@@ -87,7 +97,7 @@ function mockSyncApi() {
           { id: 'r1', status: 'completed', details: '{}' },
           { id: 'ra1', status: 'completed', details: '{}' },
         ]),
-        { status: 200 }
+        { status: 200 },
       );
     }
     return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
@@ -99,7 +109,7 @@ function renderPage() {
   return render(
     <ModalProvider>
       <SyncPage />
-    </ModalProvider>
+    </ModalProvider>,
   );
 }
 
@@ -142,7 +152,7 @@ describe('SyncPage', () => {
     await dismissAlert(user);
 
     const resolveCall = api.calls.find(
-      (c) => c.url.startsWith('/api/sync/conflicts/resolve') && c.method === 'POST'
+      (c) => c.url.startsWith('/api/sync/conflicts/resolve') && c.method === 'POST',
     );
     expect(resolveCall).toBeTruthy();
     expect(resolveCall.body.resolutions).toEqual([
@@ -160,9 +170,7 @@ describe('SyncPage', () => {
     await user.click(screen.getByRole('button', { name: /Resolve all with file values/ }));
     await screen.findByText(/All conflicts resolved with file values/i);
 
-    const call = api.calls.find(
-      (c) => c.url.startsWith('/api/sync/conflicts/resolve-all')
-    );
+    const call = api.calls.find((c) => c.url.startsWith('/api/sync/conflicts/resolve-all'));
     expect(call.body).toEqual({ choice: 'file' });
   });
 
@@ -214,7 +222,7 @@ describe('SyncPage', () => {
     await user.click(dismissButtons[0]);
     await waitFor(() => {
       expect(
-        api.calls.some((c) => c.url === '/api/sync/conflicts/c1/dismiss' && c.method === 'POST')
+        api.calls.some((c) => c.url === '/api/sync/conflicts/c1/dismiss' && c.method === 'POST'),
       ).toBe(true);
     });
   });

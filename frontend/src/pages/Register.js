@@ -4,7 +4,16 @@ import { useAuth } from '../auth/AuthContext';
 import { apiFetch } from '../api';
 
 const Logo = () => (
-  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="28"
+    height="28"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="var(--accent)"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M9 18V5l12-2v13" />
     <circle cx="6" cy="18" r="3" />
     <circle cx="18" cy="16" r="3" />
@@ -51,9 +60,7 @@ export default function Register() {
     if (submitting) return;
     setError(null);
     if (!USERNAME_PATTERN.test(username)) {
-      setError(
-        'Username must be 3-32 characters: letters, numbers, dot, dash or underscore.'
-      );
+      setError('Username must be 3-32 characters: letters, numbers, dot, dash or underscore.');
       return;
     }
     if (password.length < 8) {
@@ -127,9 +134,7 @@ export default function Register() {
 
         {awaitingApproval ? (
           <div className="register-awaiting">
-            <p className="login-hint">
-              Your account is awaiting admin approval.
-            </p>
+            <p className="login-hint">Your account is awaiting admin approval.</p>
             <Link to="/login" className="login-register-link">
               Back to login
             </Link>
@@ -168,7 +173,8 @@ export default function Register() {
             </div>
             <div className="login-field">
               <label className="settings-label" htmlFor="register-email">
-                Email <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>
+                Email{' '}
+                <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>
               </label>
               <input
                 id="register-email"
@@ -180,11 +186,7 @@ export default function Register() {
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-            <button
-              type="submit"
-              className="btn-primary login-submit"
-              disabled={submitting}
-            >
+            <button type="submit" className="btn-primary login-submit" disabled={submitting}>
               {submitting && <span className="spinner" aria-hidden="true" />}
               {submitting ? 'Creating account…' : 'Create account'}
             </button>

@@ -8,13 +8,7 @@ const COVER_TYPES = ['image/jpeg', 'image/png'];
 // CoverArtPanel shows the album cover (GET /library/albums/{id}/cover) with
 // a fallback placeholder and offers upload (file picker + drag-and-drop),
 // extract-from-file and use-from-lookup.
-export default function CoverArtPanel({
-  albumId,
-  coverKey,
-  lookupCoverUrl,
-  onDone,
-  onError,
-}) {
+export default function CoverArtPanel({ albumId, coverKey, lookupCoverUrl, onDone, onError }) {
   const [busy, setBusy] = useState(null); // 'upload' | 'extract' | 'url'
   const [dragOver, setDragOver] = useState(false);
   const [broken, setBroken] = useState(false);
@@ -114,7 +108,20 @@ export default function CoverArtPanel({
       >
         {broken ? (
           <div className="cover-placeholder" aria-label="No cover art">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 18V5l12-2v13"></path>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="16" r="3"></circle>
+            </svg>
             <span>No cover yet</span>
           </div>
         ) : (

@@ -26,11 +26,7 @@ function mockFetch(routes) {
     const status = routes[url] || 500;
     if (status === 200) {
       const body =
-        url === '/api/auth/providers'
-          ? providersBody
-          : url === '/api/auth/me'
-            ? userBody
-            : {};
+        url === '/api/auth/providers' ? providersBody : url === '/api/auth/me' ? userBody : {};
       return new Response(JSON.stringify(body), { status: 200 });
     }
     if (status === 401) {
@@ -46,12 +42,8 @@ function Probe() {
   const { user, providers, loading } = useAuth();
   return (
     <div>
-      <span data-testid="state">
-        {loading ? 'loading' : user ? user.username : 'no-user'}
-      </span>
-      <span data-testid="providers">
-        {providers ? (providers.enabled ? 'on' : 'off') : 'none'}
-      </span>
+      <span data-testid="state">{loading ? 'loading' : user ? user.username : 'no-user'}</span>
+      <span data-testid="providers">{providers ? (providers.enabled ? 'on' : 'off') : 'none'}</span>
     </div>
   );
 }
@@ -64,7 +56,7 @@ async function renderProvider() {
     root.render(
       <AuthProvider>
         <Probe />
-      </AuthProvider>
+      </AuthProvider>,
     );
   });
   return {
@@ -73,8 +65,7 @@ async function renderProvider() {
   };
 }
 
-const stateText = (container) =>
-  container.querySelector('[data-testid="state"]').textContent;
+const stateText = (container) => container.querySelector('[data-testid="state"]').textContent;
 
 describe('AuthProvider session handling', () => {
   afterEach(() => {
@@ -140,9 +131,7 @@ describe('AuthProvider session handling', () => {
     // the (absent) session is reported, so the login page renders
     // instead of spinning forever.
     expect(stateText(container)).toBe('no-user');
-    expect(
-      container.querySelector('[data-testid="providers"]').textContent
-    ).toBe('off');
+    expect(container.querySelector('[data-testid="providers"]').textContent).toBe('off');
     await unmount();
   });
 
@@ -181,7 +170,7 @@ describe('AuthProvider session handling', () => {
       root.render(
         <AuthProvider>
           <LoginProbe />
-        </AuthProvider>
+        </AuthProvider>,
       );
     });
 

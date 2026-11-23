@@ -20,10 +20,7 @@ import { useEffect, useRef } from 'react';
 //  - Enter is skipped while an interactive element (button, link, tab
 //    stop) holds DOM focus: Enter already activates it natively, and the
 //    shortcut must not double-fire on top of that
-export default function useShortcuts(
-  handlers,
-  { disabled = false, cellFocused = false } = {}
-) {
+export default function useShortcuts(handlers, { disabled = false, cellFocused = false } = {}) {
   const ref = useRef({ handlers, disabled, cellFocused });
   ref.current = { handlers, disabled, cellFocused };
 
@@ -36,10 +33,10 @@ export default function useShortcuts(
     const isTyping = (t) =>
       Boolean(
         t &&
-          (t.tagName === 'INPUT' ||
-            t.tagName === 'TEXTAREA' ||
-            t.tagName === 'SELECT' ||
-            t.isContentEditable)
+        (t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable),
       );
 
     // Enter activates a focused interactive element natively (buttons,
@@ -49,14 +46,14 @@ export default function useShortcuts(
     const isInteractive = (t) =>
       Boolean(
         t &&
-          t.tagName &&
-          (t.tagName === 'BUTTON' ||
-            t.tagName === 'A' ||
-            t.tagName === 'INPUT' ||
-            t.tagName === 'TEXTAREA' ||
-            t.tagName === 'SELECT' ||
-            t.isContentEditable ||
-            t.tabIndex >= 0)
+        t.tagName &&
+        (t.tagName === 'BUTTON' ||
+          t.tagName === 'A' ||
+          t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable ||
+          t.tabIndex >= 0),
       );
 
     const onKeyDown = (e) => {

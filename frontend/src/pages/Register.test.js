@@ -74,7 +74,7 @@ async function renderRegister() {
           </Routes>
           <LocationProbe />
         </AuthProvider>
-      </MemoryRouter>
+      </MemoryRouter>,
     );
   });
   return {
@@ -89,10 +89,7 @@ function LocationProbe() {
 
 async function setInput(container, name, value) {
   const input = container.querySelector(`input[name="${name}"]`);
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    'value'
-  ).set;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
   await act(async () => {
     setter.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -116,9 +113,7 @@ describe('Register page', () => {
     mockFetch({ registration: 'admin_only' });
     const { container, unmount } = await renderRegister();
     expect(container.querySelector('form')).toBeNull();
-    expect(
-      container.querySelector('[data-testid="loc"]').textContent
-    ).toBe('/login');
+    expect(container.querySelector('[data-testid="loc"]').textContent).toBe('/login');
     await unmount();
   });
 
@@ -131,13 +126,9 @@ describe('Register page', () => {
     await setInput(container, 'password', 'password-123');
     await submitForm(container);
 
-    expect(container.textContent).toContain(
-      'Your account is awaiting admin approval'
-    );
+    expect(container.textContent).toContain('Your account is awaiting admin approval');
     // No session: the app did not navigate in.
-    expect(
-      container.querySelector('[data-testid="location"]').textContent
-    ).toBe('/register');
+    expect(container.querySelector('[data-testid="location"]').textContent).toBe('/register');
     await unmount();
   });
 
@@ -154,12 +145,10 @@ describe('Register page', () => {
 
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/auth/register',
-      expect.objectContaining({ method: 'POST' })
+      expect.objectContaining({ method: 'POST' }),
     );
     // The open-mode session is loaded and the user lands in the app.
-    expect(
-      container.querySelector('[data-testid="loc"]').textContent
-    ).toBe('/downloads');
+    expect(container.querySelector('[data-testid="loc"]').textContent).toBe('/downloads');
     await unmount();
   });
 
@@ -194,13 +183,8 @@ describe('Register page', () => {
     await setInput(container, 'password', 'short-1');
     await submitForm(container);
 
-    expect(container.textContent).toContain(
-      'Password must be at least 8 characters'
-    );
-    expect(global.fetch).not.toHaveBeenCalledWith(
-      '/api/auth/register',
-      expect.anything()
-    );
+    expect(container.textContent).toContain('Password must be at least 8 characters');
+    expect(global.fetch).not.toHaveBeenCalledWith('/api/auth/register', expect.anything());
     await unmount();
   });
 
@@ -237,9 +221,7 @@ describe('Register page', () => {
       // assertion runs.
       await new Promise((resolve) => setTimeout(resolve, 0));
       await act(async () => {});
-      const actWarnings = errors.filter((line) =>
-        line.includes('not wrapped in act')
-      );
+      const actWarnings = errors.filter((line) => line.includes('not wrapped in act'));
       expect(actWarnings).toEqual([]);
     } finally {
       console.error = originalError;

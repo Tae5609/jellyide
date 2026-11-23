@@ -4,7 +4,16 @@ import { useAuth } from '../auth/AuthContext';
 import { safeRedirectFrom } from '../auth/redirect';
 
 const Logo = () => (
-  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="28"
+    height="28"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="var(--accent)"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M9 18V5l12-2v13" />
     <circle cx="6" cy="18" r="3" />
     <circle cx="18" cy="16" r="3" />
@@ -113,11 +122,7 @@ export default function Login() {
                 required
               />
             </div>
-            <button
-              type="submit"
-              className="btn-primary login-submit"
-              disabled={submitting}
-            >
+            <button type="submit" className="btn-primary login-submit" disabled={submitting}>
               {submitting && <span className="spinner" aria-hidden="true" />}
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>

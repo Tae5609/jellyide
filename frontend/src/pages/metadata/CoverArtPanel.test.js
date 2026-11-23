@@ -10,7 +10,7 @@ function renderPanel(lookupCoverUrl) {
       lookupCoverUrl={lookupCoverUrl}
       onDone={jest.fn()}
       onError={jest.fn()}
-    />
+    />,
   );
 }
 
@@ -21,7 +21,7 @@ describe('CoverArtPanel', () => {
     expect(btn).toBeDisabled();
     expect(btn).toHaveAttribute(
       'title',
-      'Apply a release in the MusicBrainz lookup with "Set cover art from release" checked first'
+      'Apply a release in the MusicBrainz lookup with "Set cover art from release" checked first',
     );
   });
 
@@ -31,7 +31,7 @@ describe('CoverArtPanel', () => {
     expect(btn).toBeEnabled();
     expect(btn).toHaveAttribute(
       'title',
-      'Re-download the cover from the selected MusicBrainz release'
+      'Re-download the cover from the selected MusicBrainz release',
     );
   });
 });

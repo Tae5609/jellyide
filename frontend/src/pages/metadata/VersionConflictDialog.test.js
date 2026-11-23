@@ -15,7 +15,10 @@ const edits = [
   { track_id: 't1', fields: { title: 'Mine Title', genre: 'Jazz' }, expected_version: 1 },
   { track_id: 't2', fields: { genre: 'Untouched' }, expected_version: 2 },
 ];
-const tracks = [{ id: 't1', title: 'One' }, { id: 't2', title: 'Two' }];
+const tracks = [
+  { id: 't1', title: 'One' },
+  { id: 't2', title: 'Two' },
+];
 
 function renderDialog(onResolve) {
   return render(
@@ -25,7 +28,7 @@ function renderDialog(onResolve) {
       tracks={tracks}
       onResolve={onResolve || jest.fn()}
       onClose={jest.fn()}
-    />
+    />,
   );
 }
 
@@ -53,7 +56,11 @@ describe('VersionConflictDialog', () => {
     expect(onResolve).toHaveBeenCalledTimes(1);
     const resolved = onResolve.mock.calls[0][0];
     expect(resolved).toHaveLength(1);
-    expect(resolved[0]).toEqual({ track_id: 't2', fields: { genre: 'Untouched' }, expected_version: 2 });
+    expect(resolved[0]).toEqual({
+      track_id: 't2',
+      fields: { genre: 'Untouched' },
+      expected_version: 2,
+    });
   });
 
   test('Overwrite all with yours re-applies against the new version', async () => {

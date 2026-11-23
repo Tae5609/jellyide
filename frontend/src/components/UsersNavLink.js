@@ -4,7 +4,16 @@ import { useAuth } from '../auth/AuthContext';
 import { apiFetch } from '../api';
 
 const IconUsers = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    width="18"
+    height="18"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
     <circle cx="9" cy="7" r="4" />
     <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
@@ -22,8 +31,7 @@ export default function UsersNavLink({ onClick }) {
 
   // Auth disabled means the anonymous superuser, like the backend treats
   // it; otherwise the signed-in user must be an admin.
-  const isAdmin =
-    (providers && providers.enabled === false) || (user && user.is_admin);
+  const isAdmin = (providers && providers.enabled === false) || (user && user.is_admin);
 
   useEffect(() => {
     if (!isAdmin) return undefined;

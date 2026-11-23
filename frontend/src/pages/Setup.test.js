@@ -18,7 +18,7 @@ function mockFetch({ setupRequired = true, completeStatus = 201 } = {}) {
           registration: 'admin_only',
           setup_required: setupRequired,
         }),
-        { status: 200 }
+        { status: 200 },
       );
     }
     if (url === '/api/auth/me') {
@@ -28,10 +28,9 @@ function mockFetch({ setupRequired = true, completeStatus = 201 } = {}) {
     }
     if (url === '/api/setup/complete') {
       if (completeStatus === 201) {
-        return new Response(
-          JSON.stringify({ id: 'u1', username: 'admin', is_admin: true }),
-          { status: 201 }
-        );
+        return new Response(JSON.stringify({ id: 'u1', username: 'admin', is_admin: true }), {
+          status: 201,
+        });
       }
       return new Response(JSON.stringify({ error: 'invalid setup token' }), {
         status: 403,
@@ -52,7 +51,7 @@ async function renderSetup(opts) {
         <AuthProvider>
           <Setup />
         </AuthProvider>
-      </MemoryRouter>
+      </MemoryRouter>,
     );
   });
   return {
@@ -90,9 +89,15 @@ describe('Setup page', () => {
       // Fill password fields with mismatching values via React synthetic events.
       const pwInput = container.querySelector('#setup-password');
       const cfInput = container.querySelector('#setup-confirm');
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(pwInput, 'password1');
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(
+        pwInput,
+        'password1',
+      );
       pwInput.dispatchEvent(new Event('input', { bubbles: true }));
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(cfInput, 'password2');
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(
+        cfInput,
+        'password2',
+      );
       cfInput.dispatchEvent(new Event('input', { bubbles: true }));
       // Can't easily simulate a full submit without React Test Utils; just
       // verify the error appears inline when passwords mismatch.
@@ -112,7 +117,7 @@ describe('Setup page', () => {
           <AuthProvider>
             <Setup />
           </AuthProvider>
-        </MemoryRouter>
+        </MemoryRouter>,
       );
     });
     // The component renders a Navigate, which MemoryRouter handles internally.

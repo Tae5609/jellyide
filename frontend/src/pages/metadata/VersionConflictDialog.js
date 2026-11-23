@@ -115,8 +115,8 @@ export default function VersionConflictDialog({
         </div>
         <div className="dialog-body">
           <p className="lookup-status">
-            These tracks changed since you started editing. Pick for each field
-            whether to keep the current value or overwrite it with yours.
+            These tracks changed since you started editing. Pick for each field whether to keep the
+            current value or overwrite it with yours.
           </p>
           <div className="table-scroll">
             <table className="review-table">

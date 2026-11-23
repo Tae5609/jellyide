@@ -41,7 +41,7 @@ async function renderLogin(providers) {
         <AuthProvider>
           <Login />
         </AuthProvider>
-      </MemoryRouter>
+      </MemoryRouter>,
     );
   });
   return {
@@ -51,9 +51,7 @@ async function renderLogin(providers) {
 }
 
 const createAccountLink = (container) =>
-  Array.from(container.querySelectorAll('a')).find(
-    (a) => a.textContent === 'Create account'
-  );
+  Array.from(container.querySelectorAll('a')).find((a) => a.textContent === 'Create account');
 
 describe('Login create-account link', () => {
   afterEach(() => {
@@ -61,9 +59,7 @@ describe('Login create-account link', () => {
   });
 
   test('shows the link when registration is open', async () => {
-    const { container, unmount } = await renderLogin(
-      providersBody({ registration: 'open' })
-    );
+    const { container, unmount } = await renderLogin(providersBody({ registration: 'open' }));
     const link = createAccountLink(container);
     expect(link).toBeTruthy();
     expect(link.getAttribute('href')).toBe('/register');
@@ -71,17 +67,13 @@ describe('Login create-account link', () => {
   });
 
   test('shows the link when registration is approval', async () => {
-    const { container, unmount } = await renderLogin(
-      providersBody({ registration: 'approval' })
-    );
+    const { container, unmount } = await renderLogin(providersBody({ registration: 'approval' }));
     expect(createAccountLink(container)).toBeTruthy();
     await unmount();
   });
 
   test('hides the link in admin_only mode', async () => {
-    const { container, unmount } = await renderLogin(
-      providersBody({ registration: 'admin_only' })
-    );
+    const { container, unmount } = await renderLogin(providersBody({ registration: 'admin_only' }));
     expect(createAccountLink(container)).toBeUndefined();
     await unmount();
   });
