@@ -24,10 +24,11 @@ services:
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - AUTH_LOCAL_ENABLED=${AUTH_LOCAL_ENABLED:-true}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
-      # Required: ${...:?} makes `docker compose` fail fast when it is
-      # unset, instead of the server dying at first start.
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      # Optional: unset means first-run setup — on an empty database the
+      # server starts the setup wizard (or `admin_cli` bootstraps the
+      # account). Set it to pre-create the admin instead.
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
       - REGISTRATION_MODE=${REGISTRATION_MODE:-admin_only}
       # --- OIDC (optional) ---
