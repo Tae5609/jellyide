@@ -29,8 +29,14 @@ const userBody = {
 //   loggedIn: flipped by a successful register so /auth/me then reports a
 //   session (open mode starts one server-side).
 function mockFetch({ registration, register = { status: 201, body: { status: 'pending' } } }) {
-  const state = { loggedIn: false };
-  global.fetch = jest.fn(async (url) => {
+  const state = { loggedIn: false, calls: [] };
+  global.fetch = jest.fn(async (url, opts) => {
+    state.calls.push({ url, body: opts && opts.body });
+    if (url === '/api/auth/csrf') {
+      return new Response(JSON.stringify({ token: 'csrf-123' }), {
+        status: 200,
+      });
+    }
     if (url === '/api/auth/providers') {
       return new Response(JSON.stringify(providersBody({ registration })), {
         status: 200,
@@ -154,6 +160,29 @@ describe('Register page', () => {
     expect(
       container.querySelector('[data-testid="loc"]').textContent
     ).toBe('/downloads');
+    await unmount();
+  });
+
+  // The login-CSRF wiring: submit must fetch the token from /auth/csrf
+  // and send it in the register body, so the backend's double-submit
+  // check passes (same house pattern as AuthContext's login).
+  test('register sends the login-CSRF token from /auth/csrf', async () => {
+    const state = mockFetch({
+      registration: 'open',
+      register: { status: 201, body: { status: 'active' } },
+    });
+    const { container, unmount } = await renderRegister();
+
+    await setInput(container, 'username', 'newbie');
+    await setInput(container, 'password', 'password-123');
+    await submitForm(container);
+
+    expect(state.calls.some((c) => c.url === '/api/auth/csrf')).toBe(true);
+    const registerCall = state.calls.find((c) => c.url === '/api/auth/register');
+    expect(registerCall).toBeTruthy();
+    const sent = JSON.parse(registerCall.body);
+    expect(sent.csrf_token).toBe('csrf-123');
+    expect(sent.username).toBe('newbie');
     await unmount();
   });
 

@@ -25,14 +25,20 @@ func newTestDB(t *testing.T) *db.DB {
 	return database
 }
 
-// registerUser POSTs /api/auth/register and returns the recorder.
+// registerUser POSTs /api/auth/register with a fresh login-CSRF token
+// pair (the same double-submit flow the frontend uses) and returns the
+// recorder.
 func registerUser(t *testing.T, h http.Handler, username, password, email string) *httptest.ResponseRecorder {
 	t.Helper()
 	body := map[string]string{"username": username, "password": password}
 	if email != "" {
 		body["email"] = email
 	}
-	return doReq(t, h, http.MethodPost, "/api/auth/register", body, nil)
+	token, cookie := fetchLoginCSRF(t, h)
+	body["csrf_token"] = token
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
+	return doReq(t, h, http.MethodPost, "/api/auth/register", body, hdr)
 }
 
 // adminSession logs in with username/password and returns the session cookie.
@@ -236,6 +242,100 @@ func TestRegisterRateLimit(t *testing.T) {
 	rec := registerUser(t, h, "fresh-user", "password-123", "")
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("after %d failures: got %d, want 429", loginFailureLimit, rec.Code)
+	}
+}
+
+// Regression (T12b): /api/auth/register was public and, in open mode,
+// created an account and started a session with no double-submit check,
+// so a cross-site form POST could register an account and pin the
+// victim's browser. The token pair must be verified before any account
+// work; in admin_only mode the "registration is disabled" 403 keeps its
+// precedence.
+func TestRegisterCSRFRejection(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+	if err := svc.SetRegistrationMode(RegistrationModeOpen); err != nil {
+		t.Fatalf("SetRegistrationMode: %v", err)
+	}
+
+	// Cross-site form POST: no cookie, no token.
+	rec := doReq(t, h, http.MethodPost, "/api/auth/register",
+		map[string]string{"username": "newbie", "password": "password-123"}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("no token: got %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if msg := decodeBody(t, rec)["error"]; msg != "login csrf mismatch" {
+		t.Fatalf("no token error = %v", msg)
+	}
+
+	// Token in the body but the cookie is absent (the attacker cannot
+	// read the victim's cookie).
+	rec = doReq(t, h, http.MethodPost, "/api/auth/register",
+		map[string]string{"username": "newbie", "password": "password-123", "csrf_token": "forged-token"}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("forged token, no cookie: got %d, want 403", rec.Code)
+	}
+
+	// Cookie present, body token mismatched.
+	_, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
+	rec = doReq(t, h, http.MethodPost, "/api/auth/register",
+		map[string]string{"username": "newbie", "password": "password-123", "csrf_token": "wrong-token"}, hdr)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("mismatched pair: got %d, want 403", rec.Code)
+	}
+
+	// None of the rejected attempts created a user or a session.
+	if _, err := svc.GetUserByUsername("newbie"); !errors.Is(err, ErrNoUser) {
+		t.Fatal("rejected register must not create a user")
+	}
+	var sessions int
+	if err := svc.db.Get(&sessions, `SELECT COUNT(*) FROM sessions`); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if sessions != 0 {
+		t.Fatalf("sessions created by rejected registers = %d, want 0", sessions)
+	}
+
+	// admin_only mode: the "registration is disabled" 403 keeps its
+	// precedence over the CSRF check, even without a token.
+	if err := svc.SetRegistrationMode(RegistrationModeAdminOnly); err != nil {
+		t.Fatalf("SetRegistrationMode: %v", err)
+	}
+	rec = doReq(t, h, http.MethodPost, "/api/auth/register",
+		map[string]string{"username": "newbie", "password": "password-123"}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("admin_only, no token: got %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if msg := decodeBody(t, rec)["error"]; msg != "registration is disabled" {
+		t.Fatalf("admin_only error = %v, want registration is disabled", msg)
+	}
+}
+
+// TestRegisterCSRFTokenFlow: with a valid double-submit pair, open-mode
+// registration works exactly as before (201, account created, session
+// started).
+func TestRegisterCSRFTokenFlow(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+	if err := svc.SetRegistrationMode(RegistrationModeOpen); err != nil {
+		t.Fatalf("SetRegistrationMode: %v", err)
+	}
+
+	token, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
+	rec := doReq(t, h, http.MethodPost, "/api/auth/register",
+		map[string]string{"username": "newbie", "password": "password-123", "csrf_token": token}, hdr)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register with valid token pair: got %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	if body := decodeBody(t, rec); body["status"] != "active" {
+		t.Fatalf("register status = %v, want active", body["status"])
+	}
+	if cookieValue(t, rec, SessionCookieName) == "" {
+		t.Fatal("open-mode register with a valid token pair did not start a session")
 	}
 }
 
