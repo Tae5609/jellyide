@@ -148,6 +148,12 @@ func migrate(db *sqlx.DB) error {
 			genre        TEXT,
 			composer     TEXT,
 			comment      TEXT,
+			file_size    INTEGER,
+			file_mtime   INTEGER,
+			tags_hash    TEXT,
+			version      INTEGER NOT NULL DEFAULT 1,
+			synced_at    DATETIME,
+			state        TEXT NOT NULL DEFAULT 'ok',
 			FOREIGN KEY(album_id) REFERENCES albums(id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS jobs (
@@ -201,7 +207,36 @@ func migrate(db *sqlx.DB) error {
 			target TEXT,
 			detail TEXT
 		)`,
+		// T16: one row per differing field detected between the DB and the
+		// file tags. Open until a user resolves or dismisses it.
+		`CREATE TABLE IF NOT EXISTS sync_conflicts (
+			id          TEXT PRIMARY KEY,
+			track_id    TEXT NOT NULL,
+			field       TEXT NOT NULL,
+			db_value    TEXT,
+			file_value  TEXT,
+			source      TEXT NOT NULL,
+			detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			status      TEXT NOT NULL DEFAULT 'open',
+			resolved_by TEXT,
+			resolved_at DATETIME,
+			resolution  TEXT,
+			FOREIGN KEY(track_id) REFERENCES tracks(id) ON DELETE CASCADE
+		)`,
+		// T16: files displaced by a "replace" rename collision. They are
+		// moved here (never deleted) and can be restored from the UI;
+		// entries older than 30 days are purged at startup.
+		`CREATE TABLE IF NOT EXISTS sync_trash (
+			id            TEXT PRIMARY KEY,
+			original_path TEXT NOT NULL,
+			trash_path    TEXT NOT NULL,
+			track_id      TEXT,
+			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sync_conflicts_track ON sync_conflicts(track_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_sync_conflicts_status ON sync_conflicts(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_sync_trash_created ON sync_trash(created_at)`,
 	}
 
 	for _, stmt := range statements {
@@ -242,6 +277,16 @@ func migrate(db *sqlx.DB) error {
 		{"genre", "TEXT"},
 		{"composer", "TEXT"},
 		{"comment", "TEXT"},
+		// T16 sync fingerprint: what the file looked like the last time the
+		// DB and the file were known-equal (or were last synchronized).
+		{"file_size", "INTEGER"},
+		{"file_mtime", "INTEGER"},
+		{"tags_hash", "TEXT"},
+		// T16 optimistic locking: bumped on every DB write that changes a
+		// track field (pure fingerprint bookkeeping does not bump it).
+		{"version", "INTEGER NOT NULL DEFAULT 1"},
+		{"synced_at", "DATETIME"},
+		{"state", "TEXT NOT NULL DEFAULT 'ok'"},
 	}
 	for _, col := range trackColumns {
 		if err := addColumnIfMissing(db, "tracks", col.name, col.def); err != nil {

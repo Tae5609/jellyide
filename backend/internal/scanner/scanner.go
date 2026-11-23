@@ -3,7 +3,9 @@
 package scanner
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"yt-scraper/internal/jobs"
 	"yt-scraper/internal/library"
 )
@@ -20,21 +24,46 @@ import (
 // yearRegexp finds the first run of four or more digits (a year).
 var yearRegexp = regexp.MustCompile(`\d{4,}`)
 
+// TagWriter writes audio file tags. The scanner only needs WriteFields
+// (the db_wins policy rewrites the file tags from the DB). Production
+// passes a metadata.PythonTagWriter; tests pass a stub.
+type TagWriter interface {
+	WriteFields(path string, fields map[string]interface{}) error
+}
+
 // Scanner indexes media files found under a base directory.
 type Scanner struct {
 	lib        *library.Service
 	jobManager *jobs.Manager
 	basePath   string
+	// Tags rewrites file tags from the DB under the db_wins policy.
+	// Nil disables db_wins (the track is left untouched and logged).
+	Tags TagWriter
+	// probeFile probes one file; tests substitute a fake so no ffprobe
+	// binary or real audio files are needed.
+	probeFile func(path string) (probeInfo, error)
 }
 
 // NewScanner builds a Scanner for the given library, job manager and base
 // directory.
 func NewScanner(lib *library.Service, jobManager *jobs.Manager, basePath string) *Scanner {
-	return &Scanner{
+	s := &Scanner{
 		lib:        lib,
 		jobManager: jobManager,
 		basePath:   basePath,
 	}
+	s.probeFile = s.probeFFProbe
+	return s
+}
+
+// probeFFProbe runs ffprobe on one file and parses the result.
+func (s *Scanner) probeFFProbe(path string) (probeInfo, error) {
+	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path) //nolint:gosec // G204 - ffprobe is a fixed binary; path comes from the walk under basePath or from a finished download
+	out, err := cmd.Output()
+	if err != nil {
+		return probeInfo{}, err
+	}
+	return parseFFProbe(out, path, s.basePath)
 }
 
 // FFProbeOutput is the JSON shape of
@@ -176,6 +205,9 @@ func (s *Scanner) Scan() error {
 			log.Printf("scanner: update scan job %s: %v", job.ID, err)
 		}
 
+		// One change set per scan run: the file-wins rows the scan
+		// records in the history can be reverted together.
+		changeSetID := uuid.New().String()
 		count := 0
 		walkErr := filepath.Walk(s.basePath, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -193,7 +225,7 @@ func (s *Scanner) Scan() error {
 				return nil
 			}
 
-			s.processFile(path)
+			s.processFile(path, changeSetID)
 			count++
 			if count%10 == 0 {
 				if uerr := s.jobManager.UpdateJobStatus(job.ID, jobs.StatusRunning, strconv.Itoa(count)+" tracks found", ""); uerr != nil {
@@ -209,6 +241,9 @@ func (s *Scanner) Scan() error {
 			}
 			return
 		}
+		// Ghost pass: rows whose file no longer exists become
+		// state='missing' (kept, never deleted).
+		s.markGhosts()
 		if err := s.jobManager.UpdateJobStatus(job.ID, jobs.StatusCompleted, "100%", ""); err != nil {
 			log.Printf("scanner: update scan job %s: %v", job.ID, err)
 		}
@@ -219,7 +254,7 @@ func (s *Scanner) Scan() error {
 
 // IndexFile indexes a single file (used after a download finishes).
 func (s *Scanner) IndexFile(path string) {
-	s.processFile(path)
+	s.processFile(path, uuid.New().String())
 }
 
 // isSupportedAudioExt reports whether path has a media extension the
@@ -233,35 +268,227 @@ func isSupportedAudioExt(path string) bool {
 	}
 }
 
-func (s *Scanner) processFile(path string) {
-	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path) //nolint:gosec // G204 - ffprobe is a fixed binary; path comes from the walk under basePath or from a finished download
-	out, err := cmd.Output()
+// processFile probes one file and indexes it against the library (T16
+// sync-aware upsert: see syncTrack).
+func (s *Scanner) processFile(path, changeSetID string) {
+	info, err := s.probeFile(path)
 	if err != nil {
+		// ffprobe failed (unreadable file, missing binary, corrupt media).
+		// If a row exists its file may have been deleted: mark it missing.
+		s.markGhost(path)
 		return
 	}
+	s.syncTrack(path, info, changeSetID)
+}
 
-	info, err := parseFFProbe(out, path, s.basePath)
+// syncTrack is the T16 sync-aware upsert for one probed file. A new file
+// is inserted; an existing row is compared against the fingerprint stored
+// at the last synchronization and the outcome follows the active
+// sync_conflict_policy (settings table, env SYNC_CONFLICT_POLICY, default
+// "ask"):
+//
+//	file unchanged since last sync            -> refresh synced_at, state ok
+//	state=conflict, file now matches the DB   -> clear the conflict
+//	file changed, no JellyIDE edit since sync -> file wins (as before), history
+//	file changed, DB edited since sync:
+//	  ask       -> one sync_conflicts row per differing field, state=conflict,
+//	               DB and file untouched
+//	  file_wins -> file wins, history
+//	  db_wins   -> the file tags are rewritten from the DB
+func (s *Scanner) syncTrack(path string, info probeInfo, changeSetID string) {
+	st, err := os.Stat(path)
 	if err != nil {
-		log.Printf("scanner: %v", err)
+		s.markGhost(path)
 		return
 	}
+	size, mtime := st.Size(), st.ModTime().Unix()
+	fileValues := probeTagValues(info)
+	fileHash := library.TagsHash(fileValues)
 
 	artistID, err := s.lib.EnsureArtist(info.Artist)
 	if err != nil {
+		log.Printf("scanner: ensure artist %q: %v", info.Artist, err)
 		return
 	}
-
 	albumID, err := s.lib.EnsureAlbum(artistID, info.Album)
 	if err != nil {
+		log.Printf("scanner: ensure album %q: %v", info.Album, err)
 		return
 	}
 
 	s.detectCover(albumID, filepath.Dir(path))
 
-	err = s.lib.UpsertTrack(albumID, info.Title, path, info.Duration, info.Bitrate, trackMetaFromProbe(info))
-	if err != nil {
-		log.Printf("Error upserting track %s: %v", info.Title, err)
+	track, err := s.lib.GetTrackByPath(path)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if err := s.lib.CreateTrack(albumID, info.Title, path, info.Duration, info.Bitrate, trackMetaFromProbe(info), size, mtime, fileHash); err != nil {
+			log.Printf("scanner: create track %s: %v", path, err)
+		}
+		return
+	case err != nil:
+		log.Printf("scanner: lookup track %s: %v", path, err)
+		return
 	}
+
+	s.syncExistingTrack(track, info, albumID, fileValues, fileHash, size, mtime, changeSetID)
+}
+
+// syncExistingTrack applies the detection policy to a track whose file
+// exists on disk.
+func (s *Scanner) syncExistingTrack(track *library.Track, info probeInfo, albumID string, fileValues library.TagValues, fileHash string, size, mtime int64, changeSetID string) {
+	// An unresolved conflict owns the row: the stored fingerprint is
+	// stale by definition, so compare the file against the DB directly.
+	if track.State == library.TrackStateConflict {
+		if fileHash == library.TagsHash(s.lib.RowTagValues(track)) {
+			// The file was brought back in line with the DB out of band:
+			// the conflict is resolved by equality.
+			if err := s.lib.SetSyncState(track.ID, size, mtime, fileHash, library.NowSQL(), library.TrackStateOK, false); err != nil {
+				log.Printf("scanner: set sync state for %s: %v", track.ID, err)
+			}
+			if err := s.lib.AutoResolveConflicts(track.ID, "file_matches_db"); err != nil {
+				log.Printf("scanner: auto-resolve conflicts for %s: %v", track.ID, err)
+			}
+		}
+		return
+	}
+
+	// The file is exactly what the last synchronization saw: DB and file
+	// are known-equal. This also re-adopts a file that reappears (a
+	// state='missing' row returns to ok).
+	if s.fingerprintEqual(track, fileHash, size, mtime) {
+		if err := s.lib.SetSyncState(track.ID, size, mtime, fileHash, library.NowSQL(), library.TrackStateOK, false); err != nil {
+			log.Printf("scanner: set sync state for %s: %v", track.ID, err)
+		}
+		return
+	}
+
+	// The fingerprint changed since the last sync.
+	var since string
+	if track.SyncedAt != nil {
+		since = *track.SyncedAt
+	}
+	edited, _ := s.lib.EditedSince(track.ID, since)
+	switch {
+	case !edited || s.lib.SyncPolicy() == library.SyncPolicyFileWins:
+		// No JellyIDE edit since the last sync (or the policy is
+		// file_wins): the file wins, as today — but every overwritten
+		// field is recorded in the history.
+		if _, err := s.lib.SyncFileToDB(track, fileValues, info.Duration, info.Bitrate, albumID, changeSetID); err != nil {
+			log.Printf("scanner: sync file to DB for %s: %v", track.ID, err)
+			return
+		}
+		if err := s.lib.SetSyncState(track.ID, size, mtime, fileHash, library.NowSQL(), library.TrackStateOK, false); err != nil {
+			log.Printf("scanner: set sync state for %s: %v", track.ID, err)
+		}
+	case s.lib.SyncPolicy() == library.SyncPolicyDBWins:
+		s.applyDBToFile(track)
+	default:
+		// ask: report every differing field and wait for a user
+		// decision. Both the DB and the file stay untouched; the
+		// fingerprint is not refreshed, so the next scan re-enters the
+		// state=conflict branch (no duplicate rows).
+		dbValues := s.lib.RowTagValues(track)
+		for _, field := range library.DifferingFields(dbValues, fileValues) {
+			if _, err := s.lib.InsertConflict(track.ID, field,
+				library.TagValueText(field, dbValues[field]),
+				library.TagValueText(field, fileValues[field]),
+				library.ConflictSourceScan); err != nil {
+				log.Printf("scanner: record conflict %s/%s: %v", track.ID, field, err)
+			}
+		}
+		if err := s.lib.SetTrackState(track.ID, library.TrackStateConflict); err != nil {
+			log.Printf("scanner: set state for %s: %v", track.ID, err)
+		}
+	}
+}
+
+// applyDBToFile rewrites the file tags from the DB (db_wins policy) and
+// re-synchronizes the fingerprint.
+func (s *Scanner) applyDBToFile(track *library.Track) {
+	if s.Tags == nil {
+		log.Printf("scanner: db_wins policy needs a tag writer; leaving %s untouched", track.Path)
+		return
+	}
+	dbValues := s.lib.RowTagValues(track)
+	fields := make(map[string]interface{}, len(dbValues))
+	for field, value := range dbValues {
+		fields[field] = value
+	}
+	if err := s.Tags.WriteFields(track.Path, fields); err != nil {
+		log.Printf("scanner: rewrite tags from DB for %s: %v", track.Path, err)
+		return
+	}
+	st, err := os.Stat(track.Path)
+	if err != nil {
+		log.Printf("scanner: re-stat %s: %v", track.Path, err)
+		return
+	}
+	// The file was just written with the DB values, so the DB map is the
+	// file's normalized tag map.
+	dbHash := library.TagsHash(dbValues)
+	if err := s.lib.SetSyncState(track.ID, st.Size(), st.ModTime().Unix(), dbHash, library.NowSQL(), library.TrackStateOK, false); err != nil {
+		log.Printf("scanner: set sync state for %s: %v", track.ID, err)
+	}
+}
+
+// fingerprintEqual reports whether the file matches the stored sync
+// fingerprint (size, mtime and tags hash all set and equal).
+func (s *Scanner) fingerprintEqual(track *library.Track, hash string, size, mtime int64) bool {
+	return track.FileSize != nil && *track.FileSize == size &&
+		track.FileMtime != nil && *track.FileMtime == mtime &&
+		track.TagsHash != nil && *track.TagsHash == hash
+}
+
+// markGhosts marks every track whose file no longer exists as
+// state='missing' (the row and its history are kept, never deleted).
+func (s *Scanner) markGhosts() {
+	tracks, err := s.lib.ListTracks()
+	if err != nil {
+		log.Printf("scanner: list tracks for ghost pass: %v", err)
+		return
+	}
+	for _, t := range tracks {
+		if t.State == library.TrackStateMissing {
+			continue
+		}
+		if _, err := os.Stat(t.Path); err != nil {
+			if merr := s.lib.MarkMissing(t.ID); merr != nil {
+				log.Printf("scanner: mark %s missing: %v", t.ID, merr)
+			}
+		}
+	}
+}
+
+// markGhost marks the track at path (if any) as missing.
+func (s *Scanner) markGhost(path string) {
+	track, err := s.lib.GetTrackByPath(path)
+	if err != nil {
+		return // unknown path: nothing to mark
+	}
+	if track.State == library.TrackStateMissing {
+		return
+	}
+	if err := s.lib.MarkMissing(track.ID); err != nil {
+		log.Printf("scanner: mark %s missing: %v", track.ID, err)
+	}
+}
+
+// probeTagValues is the normalized tag map of a probe result — the same
+// normalization the Python --read helper and the DB-row side use (missing
+// text -> "", missing int -> 0), so the hashes are comparable.
+func probeTagValues(info probeInfo) library.TagValues {
+	return library.NormalizeTagValues(map[string]interface{}{
+		"title":        info.Title,
+		"album":        info.Album,
+		"artist":       info.Artist,
+		"album_artist": info.AlbumArtist,
+		"track_number": info.TrackNumber,
+		"disc_number":  info.DiscNumber,
+		"year":         info.Year,
+		"genre":        info.Genre,
+		"composer":     info.Composer,
+		"comment":      info.Comment,
+	})
 }
 
 // trackMetaFromProbe converts the optional probe fields into a library

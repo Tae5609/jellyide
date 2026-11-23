@@ -39,7 +39,20 @@ type Album struct {
 }
 
 // Track is one row in the tracks table. The tag fields are pointers so a
-// missing (NULL) value is distinguishable from an empty one.
+// missing (NULL) value is distinguishable from an empty one. The sync
+// columns (T16) track the file fingerprint at the last synchronization:
+//
+//   - FileSize/FileMtime/TagsHash: the file as it was when the row was
+//     last synchronized (NULL before the first sync).
+//   - Version: bumped on every DB write that changes a track field. The
+//     editor sends it back as expected_version for optimistic locking.
+//     Pure fingerprint bookkeeping (state, synced_at, hash) does not bump
+//     it, so a rescan that only refreshes the fingerprint does not
+//     invalidate in-flight edits.
+//   - SyncedAt: when DB and file were last known-equal (or last forced
+//     equal by a policy).
+//   - State: "ok", "missing" (file gone, row kept) or "conflict" (open
+//     sync_conflicts rows; DB and file untouched until resolved).
 type Track struct {
 	ID          string  `json:"id" db:"id"`
 	AlbumID     string  `json:"album_id" db:"album_id"`
@@ -55,6 +68,12 @@ type Track struct {
 	Genre       *string `json:"genre" db:"genre"`
 	Composer    *string `json:"composer" db:"composer"`
 	Comment     *string `json:"comment" db:"comment"`
+	FileSize    *int64  `json:"file_size" db:"file_size"`
+	FileMtime   *int64  `json:"file_mtime" db:"file_mtime"`
+	TagsHash    *string `json:"tags_hash" db:"tags_hash"`
+	Version     int     `json:"version" db:"version"`
+	SyncedAt    *string `json:"synced_at" db:"synced_at"`
+	State       string  `json:"state" db:"state"`
 }
 
 // TrackMeta holds the optional tag columns of a track. A nil field means
