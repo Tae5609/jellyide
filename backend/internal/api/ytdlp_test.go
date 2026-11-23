@@ -136,11 +136,30 @@ func fakeScript(version string) string {
 }
 
 // loginToken logs in with username/password and returns the session cookie.
+// T12's login-CSRF is a double-submit: GET /api/auth/csrf first, then echo
+// the token in the login body with the matching cookie attached.
 func loginToken(t *testing.T, h http.Handler, username, password string) string {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	csrfReq := httptest.NewRequest(http.MethodGet, "/api/auth/csrf", nil)
+	csrfRec := httptest.NewRecorder()
+	h.ServeHTTP(csrfRec, csrfReq)
+	if csrfRec.Code != http.StatusOK {
+		t.Fatalf("csrf: got %d: %s", csrfRec.Code, csrfRec.Body.String())
+	}
+	var csrfBody struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(csrfRec.Body).Decode(&csrfBody); err != nil || csrfBody.Token == "" {
+		t.Fatalf("csrf: no token in response: %s", csrfRec.Body.String())
+	}
+	body, _ := json.Marshal(map[string]string{
+		"username":   username,
+		"password":   password,
+		"csrf_token": csrfBody.Token,
+	})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body))
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Cookie", "jellyide_login_csrf="+csrfBody.Token)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
