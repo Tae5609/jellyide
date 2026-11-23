@@ -20,6 +20,7 @@ import (
 // enabled, no users, no ADMIN_PASSWORD.
 func newSetupService(t *testing.T) *Service {
 	t.Helper()
+	withFastBcrypt(t)
 	database, err := db.NewDB(filepath.Join(t.TempDir(), "setup.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)

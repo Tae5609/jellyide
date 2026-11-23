@@ -30,6 +30,7 @@ const (
 // newTestService builds a Service backed by a temp-dir sqlite database.
 func newTestService(t *testing.T, cfg Config) *Service {
 	t.Helper()
+	withFastBcrypt(t)
 	if cfg.AdminPassword == "" {
 		cfg.AdminPassword = testPassword
 	}
@@ -157,8 +158,10 @@ func TestHashAndCheckPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	if hash == "secret-123" || !strings.HasPrefix(hash, "$2") {
-		t.Fatalf("expected bcrypt hash, got %q", hash)
+	// This test deliberately does not install the fast-bcrypt seam: it
+	// pins the production default, which must stay a cost-12 hash.
+	if hash == "secret-123" || !strings.HasPrefix(hash, "$2a$12$") {
+		t.Fatalf("expected bcrypt cost-%d hash, got %q", bcryptCost, hash)
 	}
 	if !CheckPassword(hash, "secret-123") {
 		t.Fatal("CheckPassword should accept the right password")
@@ -505,6 +508,7 @@ func TestSetupModeWhenNoUsersAndNoPassword(t *testing.T) {
 // failing the test.
 func newTestServiceErr(t *testing.T, cfg Config) (*Service, error) {
 	t.Helper()
+	withFastBcrypt(t)
 	if cfg.AdminUsername == "" {
 		cfg.AdminUsername = testAdmin
 	}

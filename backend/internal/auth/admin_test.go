@@ -882,6 +882,7 @@ func TestRegistrationModeFromEnv(t *testing.T) {
 		"":           RegistrationModeAdminOnly, // unset falls back
 	} {
 		t.Run("env="+mode, func(t *testing.T) {
+			withFastBcrypt(t)
 			t.Setenv("REGISTRATION_MODE", mode)
 			t.Setenv("ADMIN_PASSWORD", testPassword)
 			cfg := LoadConfig()
