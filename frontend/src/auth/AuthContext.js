@@ -85,9 +85,23 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async (username, password) => {
+    // Login-CSRF: the backend requires a token from GET /auth/csrf, which
+    // a cross-site page cannot read, so a forged login POST fails the
+    // check instead of pinning the browser onto another account. Fetch a
+    // fresh token per attempt; the double-submit cookie rides along.
+    let csrfToken = '';
+    try {
+      const csrfRes = await apiFetch('/auth/csrf');
+      if (csrfRes.ok) {
+        const data = await csrfRes.json();
+        csrfToken = (data && data.token) || '';
+      }
+    } catch (err) {
+      // The login attempt itself will surface the failure.
+    }
     const res = await apiFetch('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, csrf_token: csrfToken }),
     });
     if (!res.ok) {
       let message = `Login failed (${res.status})`;

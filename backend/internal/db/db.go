@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite" // register the pure-Go SQLite driver
@@ -167,7 +168,7 @@ func migrate(db *sqlx.DB) error {
 			new_value     TEXT,
 			change_set_id TEXT,
 			timestamp     DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY(track_id) REFERENCES tracks(id)
+			FOREIGN KEY(track_id) REFERENCES tracks(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id            TEXT PRIMARY KEY,
@@ -210,10 +211,10 @@ func migrate(db *sqlx.DB) error {
 		}
 	}
 
-	// The users table predates the status column (T8): databases created
-	// before the column existed need the ALTER, fresh ones already have it
-	// via the CREATE TABLE. Guard on PRAGMA table_info so the ALTER runs
-	// at most once.
+	// The users CREATE TABLE above intentionally has no status column: the
+	// guarded ALTER below adds it to every database, fresh ones included.
+	// The PRAGMA table_info guard keeps the ALTER idempotent — it runs at
+	// most once per database.
 	var hasStatus int
 	if err := db.Get(&hasStatus, `SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'status'`); err != nil {
 		log.Printf("Migration error: %v", err)
@@ -272,6 +273,66 @@ func migrate(db *sqlx.DB) error {
 		return err
 	}
 
+	// Pre-T12 databases created metadata_changes without ON DELETE CASCADE
+	// on track_id, and SQLite cannot alter a foreign key in place. When the
+	// guard finds the clause missing, rebuild the table with the same
+	// columns and copy the rows over. Fresh databases already carry the
+	// clause in the CREATE TABLE above, so the rebuild is skipped.
+	var tableSQL string
+	if err := db.Get(&tableSQL, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'metadata_changes'`); err != nil {
+		log.Printf("Migration error: %v", err)
+		return err
+	}
+	if !strings.Contains(tableSQL, "ON DELETE CASCADE") {
+		if err := rebuildMetadataChangesWithCascade(db); err != nil {
+			log.Printf("Migration error: %v", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// rebuildMetadataChangesWithCascade recreates metadata_changes with
+// ON DELETE CASCADE on track_id, copying every row. PRAGMA foreign_keys is
+// per-connection and a no-op inside a transaction, so the rebuild runs in
+// autocommit with the pragma switched off and is switched back on before
+// returning (also after a failure, so the connection is never left with
+// enforcement off).
+func rebuildMetadataChangesWithCascade(db *sqlx.DB) error {
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys: %w", err)
+	}
+	statements := []string{
+		`DROP TABLE IF EXISTS metadata_changes_rebuilt`,
+		`CREATE TABLE metadata_changes_rebuilt (
+			id            TEXT     PRIMARY KEY,
+			track_id      TEXT     NOT NULL,
+			field         TEXT     NOT NULL,
+			old_value     TEXT,
+			new_value     TEXT,
+			change_set_id TEXT,
+			timestamp     DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(track_id) REFERENCES tracks(id) ON DELETE CASCADE
+		)`,
+		`INSERT INTO metadata_changes_rebuilt (id, track_id, field, old_value, new_value, change_set_id, timestamp)
+			SELECT id, track_id, field, old_value, new_value, change_set_id, timestamp FROM metadata_changes`,
+		`DROP TABLE metadata_changes`,
+		`ALTER TABLE metadata_changes_rebuilt RENAME TO metadata_changes`,
+		// The DROP above took the change-set index with the old table.
+		`CREATE INDEX idx_metadata_changes_change_set ON metadata_changes(change_set_id)`,
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			if _, cerr := db.Exec(`PRAGMA foreign_keys = ON`); cerr != nil {
+				log.Printf("db: re-enabling foreign keys after rebuild error: %v", cerr)
+			}
+			return fmt.Errorf("rebuild metadata_changes: %w", err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("re-enable foreign keys: %w", err)
+	}
 	return nil
 }
 

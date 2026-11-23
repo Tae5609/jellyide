@@ -529,6 +529,89 @@ func TestRenameAlbumCollision409(t *testing.T) {
 	}
 }
 
+// Regression: rename/delete of a missing album or track must answer 404
+// like the read endpoints (getAlbum/getTrack) do, not 500 (rename) or a
+// silent 200 (delete).
+func TestLibraryMutationsMissingResource(t *testing.T) {
+	h, _, _, _, _ := newTestRouter(t)
+
+	// Rename of a missing album: 404.
+	rec := postRaw(t, h, "/api/library/albums/does-not-exist/rename", `{"title": "New Name"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("rename missing album: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "album not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "album not found")
+	}
+
+	// Delete of a missing album: 404.
+	req := httptest.NewRequest(http.MethodDelete, "/api/library/albums/does-not-exist", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete missing album: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "album not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "album not found")
+	}
+
+	// Delete of a missing track: 404.
+	req = httptest.NewRequest(http.MethodDelete, "/api/library/tracks/does-not-exist", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete missing track: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "track not found" {
+		t.Fatalf("error = %q, want %q", body["error"], "track not found")
+	}
+}
+
+// Regression: a track with recorded metadata changes used to make
+// DELETE /api/library/tracks/{id} fail with an FK constraint violation
+// (500). The ON DELETE CASCADE on metadata_changes.track_id makes the
+// delete succeed and clears the recorded changes.
+func TestDeleteTrackWithMetadataChanges(t *testing.T) {
+	h, _, lib, jm, dir := newTestRouter(t)
+	_, trackID := seedTrack(t, lib, dir, "Artist One", "Album One", "Track 1")
+
+	// Record a change on the track (writes a metadata_changes row).
+	rec := patch(t, h, "/api/metadata/tracks", fmtPatch(t, []map[string]interface{}{
+		{"track_id": trackID, "fields": map[string]interface{}{"genre": "Rock"}},
+	}))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("patch: got %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	var accepted struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	waitForAPIJob(t, jm, accepted.JobID)
+
+	// The delete must not trip the FK constraint.
+	req := httptest.NewRequest(http.MethodDelete, "/api/library/tracks/"+trackID, nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete track with changes: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := lib.GetTrack(trackID); err == nil {
+		t.Fatal("track still exists after delete")
+	}
+}
+
 func TestTriggerScanEmptyDir(t *testing.T) {
 	h, _, _, jm, _ := newTestRouter(t)
 
@@ -1073,5 +1156,21 @@ func TestInfoArgsProtectsURL(t *testing.T) {
 		if args[5] != url {
 			t.Fatalf("infoArgs(%q)[5] = %q, want the url verbatim", url, args[5])
 		}
+	}
+}
+
+// Regression: oversized JSON bodies are rejected with 413 and the
+// previous settings are kept.
+func TestSetConfigOversizedBody(t *testing.T) {
+	h, d, _, _, _ := newTestRouter(t)
+
+	limit, proxy := d.GetLimit(), d.GetProxy()
+	body := `{"concurrent_limit":7,"proxy":"` + strings.Repeat("a", maxJSONBody+1024) + `"}`
+	rec := postRaw(t, h, "/api/config", body)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: got %d, want 413", rec.Code)
+	}
+	if d.GetLimit() != limit || d.GetProxy() != proxy {
+		t.Fatalf("settings changed: limit %d->%d, proxy length %d->%d", limit, d.GetLimit(), len(proxy), len(d.GetProxy()))
 	}
 }

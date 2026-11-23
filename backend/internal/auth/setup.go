@@ -66,7 +66,7 @@ func (s *Service) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusConflict, "setup already complete")
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.setupLimiter.blocked(ip) {
 		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return

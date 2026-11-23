@@ -14,6 +14,10 @@ type Config struct {
 	// It is written to the settings table once at startup; afterwards the
 	// database value wins.
 	RegistrationMode string
+	// TrustProxy makes the rate limiter read the client IP from the first
+	// X-Forwarded-For hop. Enable it only behind a reverse proxy that
+	// overwrites the header.
+	TrustProxy bool
 }
 
 // LoadConfig reads auth settings from the environment.
@@ -26,6 +30,7 @@ func LoadConfig() Config {
 		AdminPassword:    os.Getenv("ADMIN_PASSWORD"),
 		PublicURL:        envStr("PUBLIC_URL", "http://localhost:8080"),
 		RegistrationMode: envStr("REGISTRATION_MODE", RegistrationModeAdminOnly),
+		TrustProxy:       envBool("TRUST_PROXY", false),
 	}
 }
 

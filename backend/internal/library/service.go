@@ -3,6 +3,7 @@
 package library
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -186,7 +187,17 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 
 	if len(tracks) > 0 {
 		oldPath := filepath.Dir(tracks[0].Path)
-		newPath := filepath.Join(filepath.Dir(oldPath), sanitizeFilename(newTitle))
+		if !withinDir(s.downloadDir, oldPath) {
+			return fmt.Errorf("library: album directory %q is outside the music dir", oldPath)
+		}
+		folder := sanitizeFilename(newTitle)
+		if folder == "" || folder == "." || folder == ".." {
+			return fmt.Errorf("library: invalid album title %q", newTitle)
+		}
+		newPath := filepath.Join(filepath.Dir(oldPath), folder)
+		if !withinDir(s.downloadDir, newPath) {
+			return fmt.Errorf("library: album title %q escapes the music dir", newTitle)
+		}
 
 		if oldPath != newPath {
 			if err := fsutil.SafeRename(oldPath, newPath); err != nil {
@@ -232,7 +243,8 @@ func (s *Service) RenameAlbum(albumID string, newTitle string) error {
 }
 
 // DeleteAlbum removes the album and its tracks from the database (files on
-// disk are left in place).
+// disk are left in place). It returns sql.ErrNoRows when the album does not
+// exist, so the API can answer 404 like the read endpoints do.
 func (s *Service) DeleteAlbum(albumID string) error {
 	tx, err := s.db.Beginx()
 	if err != nil {
@@ -244,19 +256,43 @@ func (s *Service) DeleteAlbum(albumID string) error {
 		}
 		return err
 	}
-	if _, err = tx.Exec("DELETE FROM albums WHERE id = ?", albumID); err != nil {
+	res, err := tx.Exec("DELETE FROM albums WHERE id = ?", albumID)
+	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			log.Printf("Library: rollback delete album: %v", rbErr)
 		}
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	// No tracks can reference a missing album (FK), so a zero-row album
+	// delete means the album was absent from the start.
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // DeleteTrack removes one track from the database (the file stays on disk).
+// It returns sql.ErrNoRows when the track does not exist.
 func (s *Service) DeleteTrack(trackID string) error {
-	_, err := s.db.Exec("DELETE FROM tracks WHERE id = ?", trackID)
-	return err
+	res, err := s.db.Exec("DELETE FROM tracks WHERE id = ?", trackID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // SetAlbumCover stores the cover art URL for an album.
@@ -273,9 +309,17 @@ func (s *Service) AlbumDir(album *Album) (string, error) {
 		return "", err
 	}
 	if len(tracks) > 0 {
-		return filepath.Dir(tracks[0].Path), nil
+		dir := filepath.Dir(tracks[0].Path)
+		if !withinDir(s.downloadDir, dir) {
+			return "", fmt.Errorf("library: album directory %q is outside the music dir", dir)
+		}
+		return dir, nil
 	}
-	return filepath.Join(s.downloadDir, sanitizeFilename(album.Artist), sanitizeFilename(album.Title)), nil
+	dir := filepath.Join(s.downloadDir, sanitizeFilename(album.Artist), sanitizeFilename(album.Title))
+	if !withinDir(s.downloadDir, dir) {
+		return "", fmt.Errorf("library: album path %q escapes the music dir", dir)
+	}
+	return dir, nil
 }
 
 // SaveCoverArt writes cover bytes into the album directory as
@@ -323,7 +367,7 @@ func (s *Service) CoverFilePath(albumID string) (string, bool, error) {
 		return "", false, fmt.Errorf("invalid cover path %q", album.CoverArt)
 	}
 	full := filepath.Join(s.downloadDir, rel)
-	if full != s.downloadDir && !strings.HasPrefix(full, s.downloadDir+string(os.PathSeparator)) {
+	if !withinDir(s.downloadDir, full) {
 		return "", false, fmt.Errorf("cover path escapes the music dir")
 	}
 	return full, true, nil
@@ -378,6 +422,15 @@ func (s *Service) GetTrack(trackID string) (*Track, error) {
 	var track Track
 	err := s.db.Get(&track, "SELECT * FROM tracks WHERE id = ?", trackID)
 	return &track, err
+}
+
+// withinDir reports whether path is base itself or lies inside base.
+func withinDir(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 // sanitizeFilename replaces characters that are illegal in file names.

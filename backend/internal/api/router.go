@@ -3,6 +3,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -60,6 +61,26 @@ func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service,
 	r.HandleFunc("/metadata/history/{change_set_id}/revert", revertChangeSet(meta)).Methods("POST")
 	r.HandleFunc("/metadata/lookup/search", lookupSearch(meta)).Methods("GET")
 	r.HandleFunc("/metadata/lookup/release/{mbid}", lookupRelease(meta)).Methods("GET")
+}
+
+// maxJSONBody caps the JSON request bodies of the API endpoints (1 MiB).
+// Cover uploads carry their own larger cap (metadata.MaxCoverBytes).
+const maxJSONBody = 1 << 20
+
+// decodeJSONBody caps r.Body at maxJSONBody and decodes it into v.
+// Oversized bodies get 413, malformed JSON 400.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			sendJSONError(w, "request body too large", http.StatusRequestEntityTooLarge)
+		} else {
+			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		}
+		return err
+	}
+	return nil
 }
 
 // writeJSON encodes v as the JSON response body. Write failures (e.g. the
@@ -126,8 +147,7 @@ func getInfo(_ *download.Downloader) http.HandlerFunc {
 func queueDownloads(d *download.Downloader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req []download.Details
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		if decodeJSONBody(w, r, &req) != nil {
 			return
 		}
 
@@ -213,8 +233,7 @@ func setConfig(d *download.Downloader) http.HandlerFunc {
 			ConcurrentLimit int    `json:"concurrent_limit"`
 			Proxy           string `json:"proxy"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		if decodeJSONBody(w, r, &req) != nil {
 			return
 		}
 		d.SetLimit(req.ConcurrentLimit)
@@ -312,12 +331,15 @@ func renameAlbum(lib *library.Service) http.HandlerFunc {
 		var req struct {
 			Title string `json:"title"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		if decodeJSONBody(w, r, &req) != nil {
 			return
 		}
 		err := lib.RenameAlbum(id, req.Title)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				sendJSONError(w, "album not found", http.StatusNotFound)
+				return
+			}
 			if errors.Is(err, library.ErrAlbumExists) {
 				sendJSONError(w, err.Error(), http.StatusConflict)
 				return
@@ -335,6 +357,10 @@ func deleteAlbum(lib *library.Service) http.HandlerFunc {
 		id := vars["id"]
 		err := lib.DeleteAlbum(id)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				sendJSONError(w, "album not found", http.StatusNotFound)
+				return
+			}
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -348,6 +374,10 @@ func deleteTrack(lib *library.Service) http.HandlerFunc {
 		id := vars["id"]
 		err := lib.DeleteTrack(id)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				sendJSONError(w, "track not found", http.StatusNotFound)
+				return
+			}
 			sendJSONError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -383,8 +413,7 @@ func analyzeAlbum(meta *metadata.Service) http.HandlerFunc {
 func previewMetadata(meta *metadata.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req metadata.PreviewRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		if decodeJSONBody(w, r, &req) != nil {
 			return
 		}
 		res, err := meta.PreviewChanges(req)
@@ -399,8 +428,7 @@ func previewMetadata(meta *metadata.Service) http.HandlerFunc {
 func applyMetadata(meta *metadata.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req []metadata.PreviewResponse
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		if decodeJSONBody(w, r, &req) != nil {
 			return
 		}
 		err := meta.ApplyChanges(req)
@@ -464,8 +492,7 @@ func patchTracks(meta *metadata.Service) http.HandlerFunc {
 		var req struct {
 			Edits []metadata.TrackEdit `json:"edits"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		if decodeJSONBody(w, r, &req) != nil {
 			return
 		}
 		jobID, changeSetID, err := meta.ApplyTrackEdits(req.Edits)
@@ -573,8 +600,7 @@ func coverFromURL(meta *metadata.Service) http.HandlerFunc {
 		var req struct {
 			URL string `json:"url"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "invalid json", http.StatusBadRequest)
+		if decodeJSONBody(w, r, &req) != nil {
 			return
 		}
 		jobID, coverURL, err := meta.CoverFromURL(id, req.URL)

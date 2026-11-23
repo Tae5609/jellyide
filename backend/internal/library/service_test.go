@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -409,6 +410,118 @@ func TestRenameAlbumTargetExists(t *testing.T) {
 	}
 }
 
+func TestRenameAlbumRejectsTraversal(t *testing.T) {
+	s, dir := newTestService(t)
+
+	artistID, err := s.EnsureArtist("Artist One")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "Old")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	oldDir := filepath.Join(dir, "Artist One", "Old")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(oldDir, "Song.flac"), 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+
+	for _, title := range []string{"..", ".", ""} {
+		if err := s.RenameAlbum(albumID, title); err == nil {
+			t.Fatalf("RenameAlbum(%q) should be rejected", title)
+		}
+	}
+	// The album directory must still be in place.
+	if _, err := os.Stat(oldDir); err != nil {
+		t.Fatalf("old dir disappeared: %v", err)
+	}
+	album, err := s.GetAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if album.Title != "Old" {
+		t.Fatalf("album title = %q, want unchanged", album.Title)
+	}
+}
+
+func TestRenameAlbumRejectsExistingTarget(t *testing.T) {
+	s, dir := newTestService(t)
+
+	artistID, err := s.EnsureArtist("Artist One")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "Old")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	oldDir := filepath.Join(dir, "Artist One", "Old")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(oldDir, "Song.flac"), 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "Artist One", "New"), 0o700); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+
+	if err := s.RenameAlbum(albumID, "New"); err == nil {
+		t.Fatal("RenameAlbum onto an existing directory should fail")
+	}
+	if _, err := os.Stat(oldDir); err != nil {
+		t.Fatalf("old dir disappeared: %v", err)
+	}
+}
+
+// Regression: the track path is a DB value. When it points outside the
+// music dir, the rename must be refused instead of moving a directory
+// somewhere else on the filesystem.
+func TestRenameAlbumRejectsTrackOutsideMusicDir(t *testing.T) {
+	s, _ := newTestService(t)
+
+	artistID, err := s.EnsureArtist("Artist One")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := s.EnsureAlbum(artistID, "Old")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+
+	// A directory outside the music dir holding the "album" files.
+	victim := t.TempDir()
+	victimDir := filepath.Join(victim, "victim")
+	if err := os.MkdirAll(victimDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(victimDir, "Song.flac"), []byte("audio"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := s.UpsertTrack(albumID, "Song", filepath.Join(victimDir, "Song.flac"), 60, 900, TrackMeta{}); err != nil {
+		t.Fatalf("UpsertTrack: %v", err)
+	}
+
+	if err := s.RenameAlbum(albumID, "New"); err == nil {
+		t.Fatal("RenameAlbum should refuse a track path outside the music dir")
+	}
+	if _, err := os.Stat(victimDir); err != nil {
+		t.Fatalf("victim directory was renamed away: %v", err)
+	}
+}
+
+func TestAlbumDirRejectsEscape(t *testing.T) {
+	s, _ := newTestService(t)
+
+	album := &Album{ID: "missing", Artist: "..", Title: "x"}
+	if _, err := s.AlbumDir(album); err == nil {
+		t.Fatal("AlbumDir should reject an artist that escapes the music dir")
+	}
+}
+
 func TestDeleteAlbum(t *testing.T) {
 	s, dir := newTestService(t)
 
@@ -429,6 +542,9 @@ func TestDeleteAlbum(t *testing.T) {
 	}
 	if _, err := s.GetAlbum(albumID); err == nil {
 		t.Fatal("album still present after delete")
+	}
+	if err := s.DeleteAlbum(albumID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("DeleteAlbum missing album err = %v, want sql.ErrNoRows", err)
 	}
 	tracks, err := s.GetTracksByAlbum(albumID)
 	if err != nil {
@@ -469,9 +585,10 @@ func TestDeleteTrack(t *testing.T) {
 		t.Fatalf("tracks = %d after delete, want 0", len(remaining))
 	}
 
-	// Deleting a missing track is a no-op without error.
-	if err := s.DeleteTrack("missing"); err != nil {
-		t.Fatalf("DeleteTrack missing: %v", err)
+	// Deleting a missing track reports sql.ErrNoRows (the API maps it to
+	// 404, matching the read endpoints).
+	if err := s.DeleteTrack("missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("DeleteTrack missing err = %v, want sql.ErrNoRows", err)
 	}
 }
 

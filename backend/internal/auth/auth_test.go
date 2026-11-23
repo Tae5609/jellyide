@@ -3,13 +3,19 @@ package auth
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"yt-scraper/internal/db"
 
@@ -24,6 +30,7 @@ const (
 // newTestService builds a Service backed by a temp-dir sqlite database.
 func newTestService(t *testing.T, cfg Config) *Service {
 	t.Helper()
+	withFastBcrypt(t)
 	if cfg.AdminPassword == "" {
 		cfg.AdminPassword = testPassword
 	}
@@ -93,10 +100,38 @@ func cookieValue(t *testing.T, rec *httptest.ResponseRecorder, name string) stri
 	return ""
 }
 
+// fetchLoginCSRF grabs a login-CSRF token and its double-submit cookie
+// from GET /api/auth/csrf.
+func fetchLoginCSRF(t *testing.T, h http.Handler) (token, cookie string) {
+	t.Helper()
+	rec := doReq(t, h, http.MethodGet, "/api/auth/csrf", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("csrf: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := decodeBody(t, rec)
+	token, _ = body["token"].(string)
+	if token == "" {
+		t.Fatal("csrf response has no token")
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "jellyide_login_csrf" {
+			cookie = c.Name + "=" + c.Value
+		}
+	}
+	if cookie != "jellyide_login_csrf="+token {
+		t.Fatalf("csrf cookie %q does not match the body token (double-submit premise)", cookie)
+	}
+	return token, cookie
+}
+
+// login fetches a login-CSRF token and performs a local login with it.
 func login(t *testing.T, h http.Handler, username, password string) *httptest.ResponseRecorder {
 	t.Helper()
+	token, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
 	return doReq(t, h, http.MethodPost, "/api/auth/login",
-		map[string]string{"username": username, "password": password}, nil)
+		map[string]string{"username": username, "password": password, "csrf_token": token}, hdr)
 }
 
 func sessionHeader(t *testing.T, token string, xrw bool) http.Header {
@@ -123,8 +158,10 @@ func TestHashAndCheckPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	if hash == "secret-123" || !strings.HasPrefix(hash, "$2") {
-		t.Fatalf("expected bcrypt hash, got %q", hash)
+	// This test deliberately does not install the fast-bcrypt seam: it
+	// pins the production default, which must stay a cost-12 hash.
+	if hash == "secret-123" || !strings.HasPrefix(hash, "$2a$12$") {
+		t.Fatalf("expected bcrypt cost-%d hash, got %q", bcryptCost, hash)
 	}
 	if !CheckPassword(hash, "secret-123") {
 		t.Fatal("CheckPassword should accept the right password")
@@ -471,6 +508,7 @@ func TestSetupModeWhenNoUsersAndNoPassword(t *testing.T) {
 // failing the test.
 func newTestServiceErr(t *testing.T, cfg Config) (*Service, error) {
 	t.Helper()
+	withFastBcrypt(t)
 	if cfg.AdminUsername == "" {
 		cfg.AdminUsername = testAdmin
 	}
@@ -543,5 +581,314 @@ func TestFindOrCreateExternalUserNameCollision(t *testing.T) {
 			t.Fatalf("duplicate username %q", row.Username)
 		}
 		seen[row.Username] = true
+	}
+}
+
+// Regression: concurrent first logins that all resolve to the same base
+// username must all succeed with distinct names instead of one hitting the
+// UNIQUE constraint and surfacing a 500.
+func TestFindOrCreateExternalUserConcurrent(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	users := make(chan *User, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			u, err := svc.FindOrCreateExternalUser("oidc", fmt.Sprintf("sub-%d", i), "same", "", "", false)
+			if err != nil {
+				errs <- err
+				return
+			}
+			users <- u
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	close(users)
+
+	for err := range errs {
+		t.Fatalf("FindOrCreateExternalUser: %v", err)
+	}
+	seen := map[string]bool{}
+	for u := range users {
+		if seen[u.Username] {
+			t.Fatalf("duplicate username %q", u.Username)
+		}
+		seen[u.Username] = true
+	}
+	if len(seen) != n {
+		t.Fatalf("created %d users, want %d", len(seen), n)
+	}
+}
+
+// Regression: concurrent first logins for the same (provider, subject) must
+// all return the same user, not a UNIQUE violation.
+func TestFindOrCreateExternalUserConcurrentSameSubject(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	users := make(chan *User, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			u, err := svc.FindOrCreateExternalUser("oidc", "same-subject", "same", "", "", false)
+			if err != nil {
+				errs <- err
+				return
+			}
+			users <- u
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(users)
+
+	for err := range errs {
+		t.Fatalf("FindOrCreateExternalUser: %v", err)
+	}
+	var id string
+	for u := range users {
+		if id == "" {
+			id = u.ID
+		} else if u.ID != id {
+			t.Fatalf("same subject returned different users: %q and %q", id, u.ID)
+		}
+	}
+}
+
+// TestClientIP covers the rate-limiter key selection. With TrustProxy on
+// the first X-Forwarded-For hop wins; an unparseable or missing header
+// falls back to the peer. With TrustProxy off (the default) the header is
+// ignored so a client cannot spoof it.
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		trustProxy bool
+		remoteAddr string
+		xff        string
+		want       string
+	}{
+		{"trust proxy: first hop wins", true, "10.0.0.1:40000", "203.0.113.7, 10.0.0.1", "203.0.113.7"},
+		{"trust proxy: single hop", true, "10.0.0.1:40000", "203.0.113.7", "203.0.113.7"},
+		{"trust proxy: padded hop", true, "10.0.0.1:40000", "  203.0.113.9 , 10.0.0.1", "203.0.113.9"},
+		{"trust proxy: ipv6 hop", true, "10.0.0.1:40000", "2001:db8::7, 10.0.0.1", "2001:db8::7"},
+		{"trust proxy: unparseable hop falls back to peer", true, "10.0.0.1:40000", "not-an-ip, 10.0.0.1", "10.0.0.1"},
+		{"trust proxy: missing header falls back to peer", true, "10.0.0.1:40000", "", "10.0.0.1"},
+		{"trust proxy off: header ignored", false, "10.0.0.1:40000", "203.0.113.7", "10.0.0.1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newTestService(t, Config{Enabled: true, LocalEnabled: true, TrustProxy: tt.trustProxy})
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.xff != "" {
+				req.Header.Set("X-Forwarded-For", tt.xff)
+			}
+			if got := svc.clientIP(req); got != tt.want {
+				t.Fatalf("clientIP = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Regression for the shared-bucket lockout: behind a reverse proxy every
+// request shares the proxy's RemoteAddr, so the limiter must key on the
+// first X-Forwarded-For hop when TrustProxy is on. One locked-out client
+// must not lock out the other clients, and with TrustProxy off a client
+// cannot pin another client's bucket by spoofing the header.
+func TestLoginRateLimitTrustProxy(t *testing.T) {
+	const (
+		attackerPeer = "10.0.0.1:40000"
+		otherPeer    = "10.0.0.2:40000"
+		victimPeer   = "198.51.100.9:55555"
+	)
+	// A valid double-submit pair (matching cookie and body token) so the
+	// attempts reach the credential check and feed the limiter.
+	badLogin := `{"username":"nobody","password":"wrong-password-1","csrf_token":"trust-proxy-test-token"}`
+
+	post := func(t *testing.T, h http.Handler, peer, xff string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(badLogin))
+		req.RemoteAddr = peer
+		req.Header.Set("Cookie", "jellyide_login_csrf=trust-proxy-test-token")
+		if xff != "" {
+			req.Header.Set("X-Forwarded-For", xff)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("trust proxy keys on first hop", func(t *testing.T) {
+		svc := newTestService(t, Config{Enabled: true, LocalEnabled: true, TrustProxy: true})
+		h := newTestHandler(svc)
+
+		for i := 0; i < loginFailureLimit; i++ {
+			rec := post(t, h, attackerPeer, "203.0.113.7")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: got %d, want 401", i+1, rec.Code)
+			}
+		}
+		// Same XFF hop from a different peer is the same client: blocked.
+		rec := post(t, h, otherPeer, "203.0.113.7")
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("same XFF hop: got %d, want 429", rec.Code)
+		}
+		// A different XFF hop is a different client: not blocked.
+		rec = post(t, h, attackerPeer, "203.0.113.8")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("different XFF hop: got %d, want 401", rec.Code)
+		}
+	})
+
+	t.Run("trust proxy off ignores spoofed header", func(t *testing.T) {
+		svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+		h := newTestHandler(svc)
+
+		// The attacker floods the login with the victim's address in the
+		// header; the limiter must only see the attacker's peer.
+		for i := 0; i < loginFailureLimit; i++ {
+			rec := post(t, h, attackerPeer, "198.51.100.9")
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("attempt %d: got %d, want 401", i+1, rec.Code)
+			}
+		}
+		// The attacker's peer is now locked out.
+		rec := post(t, h, attackerPeer, "198.51.100.9")
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("attacker: got %d, want 429", rec.Code)
+		}
+		// The victim's own connection is untouched by the spoofed header.
+		rec = post(t, h, victimPeer, "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("victim: got %d, want 401", rec.Code)
+		}
+	})
+}
+
+// TestLoginCSRFTokenFlow: the double-submit flow works end to end —
+// GET /auth/csrf issues the token (body + SameSite=Lax cookie), and the
+// login POST carrying the matching pair succeeds.
+func TestLoginCSRFTokenFlow(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+
+	token, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
+	rec := doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword, "csrf_token": token}, hdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login with valid token pair: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if cookieValue(t, rec, SessionCookieName) == "" {
+		t.Fatal("valid login did not set a session cookie")
+	}
+}
+
+// TestLoginCSRFRejection: a cross-site request cannot carry the token
+// pair. Missing token, missing cookie and a mismatched pair are all
+// rejected with 403 before any credential work, and no session is created.
+func TestLoginCSRFRejection(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+
+	// Cross-site form POST: no cookie, no token.
+	rec := doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("no token: got %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if msg := decodeBody(t, rec)["error"]; msg != "login csrf mismatch" {
+		t.Fatalf("no token error = %v", msg)
+	}
+
+	// Token in the body but the cookie is absent (the attacker cannot
+	// read the victim's cookie).
+	rec = doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword, "csrf_token": "forged-token"}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("forged token, no cookie: got %d, want 403", rec.Code)
+	}
+
+	// Cookie present, body token mismatched.
+	_, cookie := fetchLoginCSRF(t, h)
+	hdr := http.Header{}
+	hdr.Set("Cookie", cookie)
+	rec = doReq(t, h, http.MethodPost, "/api/auth/login",
+		map[string]string{"username": testAdmin, "password": testPassword, "csrf_token": "wrong-token"}, hdr)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("mismatched pair: got %d, want 403", rec.Code)
+	}
+
+	// None of the rejected attempts pinned a session onto the victim.
+	var n int
+	if err := svc.db.Get(&n, `SELECT COUNT(*) FROM sessions`); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("sessions created by rejected logins = %d, want 0", n)
+	}
+}
+
+// Regression: a session row pointing at a deleted user (orphaned session)
+// must be dropped and reported as "no valid session". GetUserByID maps
+// sql.ErrNoRows to ErrNoUser, so the check must compare against ErrNoUser;
+// comparing against sql.ErrNoRows was dead code and the error leaked
+// instead of the session being cleaned up.
+func TestUserFromRequestDropsOrphanedSession(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+
+	const token = "orphan-session-token"
+	sum := sha256.Sum256([]byte(token))
+	tokenHash := hex.EncodeToString(sum[:])
+	// The sessions FK would refuse the row, so switch it off on the write
+	// connection just for the insert and back on before continuing.
+	if _, err := svc.DB().Exec("PRAGMA foreign_keys = OFF"); err != nil {
+		t.Fatalf("pragma off: %v", err)
+	}
+	if _, err := svc.DB().Exec(
+		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)`,
+		tokenHash, "missing-user-id", formatTime(time.Now().Add(time.Hour))); err != nil {
+		t.Fatalf("insert orphaned session: %v", err)
+	}
+	if _, err := svc.DB().Exec("PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("pragma on: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	// The request cookie mirrors the real session cookie flags (Secure is
+	// unconditionally true here; it is config-driven only on the way out).
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	_, err := svc.UserFromRequest(req)
+	if !errors.Is(err, ErrNoSession) {
+		t.Fatalf("UserFromRequest err = %v, want ErrNoSession", err)
+	}
+	var n int
+	if err := svc.db.Get(&n, `SELECT COUNT(*) FROM sessions WHERE token_hash = ?`, tokenHash); err != nil {
+		t.Fatalf("count session: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("orphaned session row still present: %d, want 0", n)
+	}
+}
+
+// Regression: oversized JSON bodies are rejected with 413 before any of
+// the body is processed.
+func TestLoginOversizedBody(t *testing.T) {
+	svc := newTestService(t, Config{Enabled: true, LocalEnabled: true})
+	h := newTestHandler(svc)
+
+	body := `{"username":"` + testAdmin + `","password":"` + strings.Repeat("a", maxAuthBody+1024) + `"}`
+	rec := doReq(t, h, http.MethodPost, "/api/auth/login", body, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: got %d, want 413", rec.Code)
 	}
 }

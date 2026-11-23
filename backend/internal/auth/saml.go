@@ -253,7 +253,7 @@ var _ samlsp.SessionProvider = (*samlSessionBridge)(nil)
 // CreateSession runs after samlsp has validated the ACS response
 // (signature and conditions included). It resolves the user, records a
 // JellyIDE session and redirects to the app.
-func (b *samlSessionBridge) CreateSession(w http.ResponseWriter, r *http.Request, assertion *saml.Assertion) error {
+func (b *samlSessionBridge) CreateSession(w http.ResponseWriter, _ *http.Request, assertion *saml.Assertion) error {
 	nameID := ""
 	if assertion.Subject != nil && assertion.Subject.NameID != nil {
 		nameID = assertion.Subject.NameID.Value
@@ -315,10 +315,16 @@ func (b *samlSessionBridge) CreateSession(w http.ResponseWriter, r *http.Request
 		return errors.New("saml: account disabled")
 	}
 
+	// Record the login like the local and OIDC flows do (non-fatal on
+	// failure, so a last_login write error does not break SSO).
+	if err := b.svc.TouchLastLogin(user.ID); err != nil {
+		log.Printf("[auth] saml: touch last login: %v", err)
+	}
 	if err := b.svc.StartSession(w, user.ID); err != nil {
 		return fmt.Errorf("saml: start session: %w", err)
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	// samlsp writes the redirect after CreateSession returns; writing one
+	// here too would trigger a superfluous WriteHeader.
 	return nil
 }
 

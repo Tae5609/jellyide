@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -146,11 +149,14 @@ func (l *loginLimiter) pruneLocked(ip string, now time.Time) []time.Time {
 	return recent
 }
 
+// dummyPassword is the fixed plaintext the dummy hash is derived from.
+const dummyPassword = "timing-equalizer-dummy-password"
+
 // dummyHash equalizes bcrypt timing for unknown users.
 var dummyHash string
 
 func init() {
-	if h, err := HashPassword("timing-equalizer-dummy-password"); err == nil {
+	if h, err := HashPassword(dummyPassword); err == nil {
 		dummyHash = h
 	}
 }
@@ -159,6 +165,7 @@ func init() {
 // are mounted only when OIDC has been enabled at startup.
 func (s *Service) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/auth/providers", s.handleProviders).Methods(http.MethodGet)
+	r.HandleFunc("/auth/csrf", s.handleLoginCSRF).Methods(http.MethodGet)
 	r.HandleFunc("/auth/login", s.handleLogin).Methods(http.MethodPost)
 	r.HandleFunc("/auth/logout", s.handleLogout).Methods(http.MethodPost)
 	r.HandleFunc("/auth/me", s.handleMe).Methods(http.MethodGet)
@@ -197,6 +204,53 @@ func ValidUsername(username string) bool {
 // MinPasswordLength is the shortest accepted password.
 const MinPasswordLength = 8
 
+// loginCSRFCookieName is the double-submit cookie carrying the login-CSRF
+// token. GET /auth/csrf sets the cookie and returns the same value in the
+// response body; the login form must echo the token in the login body.
+const loginCSRFCookieName = "jellyide_login_csrf"
+
+// loginCSRFMaxAge bounds how long an issued login-CSRF token stays valid.
+const loginCSRFMaxAge = time.Hour
+
+// handleLoginCSRF: GET /api/auth/csrf (public). Issues the login-CSRF
+// token: a random value returned in the body and mirrored in a SameSite=Lax
+// cookie. A cross-site page can read neither half of the pair — the body
+// is same-origin only (no CORS) and the Lax cookie is not attached to
+// cross-site POSTs — so a forged login can never carry a matching token.
+func (s *Service) handleLoginCSRF(w http.ResponseWriter, _ *http.Request) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // G124 - the Secure flag is deliberately config-driven (COOKIE_SECURE)
+		Name:     loginCSRFCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cfg.CookieSecure,
+		MaxAge:   int(loginCSRFMaxAge.Seconds()),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+// verifyLoginCSRF implements the double-submit login-CSRF check: the
+// csrf_token in the login body must equal the login-CSRF cookie. A
+// cross-site attacker can read neither the cookie (opaque to other origins
+// and not sent on cross-site POSTs) nor a fresh token (no CORS), so a
+// forged login POST gets 403 instead of pinning the victim's browser onto
+// the attacker's account.
+func verifyLoginCSRF(w http.ResponseWriter, r *http.Request, token string) bool {
+	cookie, err := r.Cookie(loginCSRFCookieName)
+	if err != nil || token == "" || !hmac.Equal([]byte(cookie.Value), []byte(token)) {
+		writeJSONError(w, http.StatusForbidden, "login csrf mismatch")
+		return false
+	}
+	return true
+}
+
 // handleRegister: POST /api/auth/register (public).
 // Creates a local user in open or approval mode; in admin_only mode the
 // endpoint answers 403. Uses the same in-memory failure limiter as login.
@@ -206,8 +260,7 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Email    string `json:"email"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !s.cfg.LocalEnabled {
@@ -225,16 +278,20 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.limiter.blocked(ip) {
 		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
+	// Validation rejections feed the shared failure limiter too: a flood
+	// of short usernames or passwords must not sail past the lockout.
 	if !usernameRegexp.MatchString(req.Username) {
+		s.limiter.record(ip)
 		writeJSONError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
 	if len(req.Password) < MinPasswordLength {
+		s.limiter.record(ip)
 		writeJSONError(w, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
@@ -288,22 +345,28 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"status": status})
 }
 
-// handleLogin: POST /api/auth/login
+// handleLogin: POST /api/auth/login. The body must carry the login-CSRF
+// token from GET /auth/csrf (double-submit, see verifyLoginCSRF): the
+// endpoint is public, so without the token a cross-site form POST could
+// pin the victim's browser onto the attacker's account.
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		CSRFToken string `json:"csrf_token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !s.cfg.LocalEnabled {
 		writeJSONError(w, http.StatusForbidden, "local login disabled")
 		return
 	}
+	if !verifyLoginCSRF(w, r, req.CSRFToken) {
+		return
+	}
 
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.limiter.blocked(ip) {
 		writeJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
@@ -388,8 +451,7 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	u := UserFromContext(r.Context())
@@ -421,8 +483,44 @@ func (s *Service) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// clientIP extracts the peer IP from RemoteAddr.
-func clientIP(r *http.Request) string {
+// maxAuthBody caps the JSON request bodies of the auth endpoints
+// (1 MiB). Cover uploads carry their own larger cap in the metadata
+// package.
+const maxAuthBody = 1 << 20
+
+// decodeJSONBody caps r.Body at maxAuthBody and decodes it into v.
+// Oversized bodies get 413, malformed JSON 400.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, v interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxAuthBody)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		} else {
+			writeJSONError(w, http.StatusBadRequest, "invalid json")
+		}
+		return err
+	}
+	return nil
+}
+
+// clientIP returns the address used for rate limiting. Behind a trusted
+// proxy the first X-Forwarded-For hop wins; otherwise the direct peer is
+// used so a client cannot spoof the header.
+func (s *Service) clientIP(r *http.Request) string {
+	if s.cfg.TrustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			first := strings.TrimSpace(strings.Split(xff, ",")[0])
+			if ip := net.ParseIP(first); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+	return peerIP(r)
+}
+
+// peerIP extracts the peer IP from RemoteAddr.
+func peerIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
