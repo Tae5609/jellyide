@@ -40,6 +40,12 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Builds the backend again (cheap: module cache) and runs the
+      # server against a temp dir to smoke-test the auth flows.
+      - name: Auth smoke test
+        working-directory: ${{ github.workspace }}
+        run: ./scripts/smoke-auth.sh
+
       - name: Total coverage
         run: |
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}')
