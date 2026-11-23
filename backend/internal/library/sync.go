@@ -374,7 +374,7 @@ func (s *Service) ListConflicts(status, albumID string) ([]ConflictTrack, error)
 			grouped[r.TrackID] = g
 			order = append(order, r.TrackID)
 		}
-		r.Conflict.ConflictID = r.Conflict.ID
+		r.ConflictID = r.ID
 		g.Fields = append(g.Fields, r.Conflict)
 	}
 	out := make([]ConflictTrack, 0, len(order))
