@@ -3,7 +3,6 @@ package auth
 
 import (
 	"crypto/subtle"
-	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
@@ -58,8 +57,10 @@ func (s *Service) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Email    string `json:"email"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid json")
+	// The same bounded decode as every other JSON endpoint (T12): a
+	// 1 MiB cap with 413 on overflow, so the public setup endpoint
+	// cannot be fed an unbounded body.
+	if decodeJSONBody(w, r, &req) != nil {
 		return
 	}
 	if !s.SetupRequired() {
