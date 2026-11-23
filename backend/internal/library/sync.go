@@ -55,6 +55,7 @@ func IsValidSyncPolicy(policy string) bool {
 // Conflict is one row in the sync_conflicts table.
 type Conflict struct {
 	ID         string  `json:"id" db:"id"`
+	ConflictID string  `json:"conflict_id" db:"-"` // mirrors ID in the grouped API shape
 	TrackID    string  `json:"track_id" db:"track_id"`
 	Field      string  `json:"field" db:"field"`
 	DBValue    *string `json:"db_value" db:"db_value"`
@@ -373,6 +374,7 @@ func (s *Service) ListConflicts(status, albumID string) ([]ConflictTrack, error)
 			grouped[r.TrackID] = g
 			order = append(order, r.TrackID)
 		}
+		r.Conflict.ConflictID = r.Conflict.ID
 		g.Fields = append(g.Fields, r.Conflict)
 	}
 	out := make([]ConflictTrack, 0, len(order))

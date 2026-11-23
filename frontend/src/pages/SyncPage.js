@@ -102,21 +102,21 @@ export default function SyncPage() {
     setChoices((prev) => {
       const next = { ...prev };
       group.fields.forEach((f) => {
-        next[f.id] = { choice };
+        next[f.conflict_id || f.id] = { choice };
       });
       return next;
     });
   };
 
   const allChosen = (group) =>
-    group.fields.every((f) => choiceOf(f.id) && choiceOf(f.id).choice);
+    group.fields.every((f) => choiceOf(f.conflict_id || f.id) && choiceOf(f.conflict_id || f.id).choice);
 
   const resolveTrack = (group) => {
     const resolutions = group.fields.map((f) => ({
-      conflict_id: f.id,
-      choice: choiceOf(f.id).choice,
-      ...(choiceOf(f.id).choice === 'custom'
-        ? { value: choiceOf(f.id).value }
+      conflict_id: f.conflict_id || f.id,
+      choice: choiceOf(f.conflict_id || f.id).choice,
+      ...(choiceOf(f.conflict_id || f.id).choice === 'custom'
+        ? { value: choiceOf(f.conflict_id || f.id).value }
         : {}),
     }));
     withJob('Resolutions applied.', () =>
@@ -138,7 +138,7 @@ export default function SyncPage() {
   const dismiss = async (conflict) => {
     setBusy(true);
     try {
-      const res = await apiFetch(`/sync/conflicts/${conflict.id}/dismiss`, {
+      const res = await apiFetch(`/sync/conflicts/${conflict.conflict_id || conflict.id}/dismiss`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error(await errorFromResponse(res));
@@ -305,9 +305,9 @@ export default function SyncPage() {
                       </thead>
                       <tbody>
                         {g.fields.map((f) => {
-                          const c = choiceOf(f.id);
+                          const c = choiceOf(f.conflict_id || f.id);
                           return (
-                            <tr key={f.id}>
+                            <tr key={f.conflict_id || f.id}>
                               <td title={SOURCE_LABELS[f.source] || ''}>
                                 {labelOf(f.field)}
                                 {f.source && (
@@ -323,9 +323,9 @@ export default function SyncPage() {
                                 <label className="sync-radio">
                                   <input
                                     type="radio"
-                                    name={`choice-${f.id}`}
+                                    name={`choice-${f.conflict_id || f.id}`}
                                     checked={Boolean(c && c.choice === 'db')}
-                                    onChange={() => setChoice(f.id, 'db')}
+                                    onChange={() => setChoice(f.conflict_id || f.id, 'db')}
                                     disabled={busy}
                                   />
                                   <span>JellyIDE</span>
@@ -333,9 +333,9 @@ export default function SyncPage() {
                                 <label className="sync-radio">
                                   <input
                                     type="radio"
-                                    name={`choice-${f.id}`}
+                                    name={`choice-${f.conflict_id || f.id}`}
                                     checked={Boolean(c && c.choice === 'file')}
-                                    onChange={() => setChoice(f.id, 'file')}
+                                    onChange={() => setChoice(f.conflict_id || f.id, 'file')}
                                     disabled={busy}
                                   />
                                   <span>File</span>
@@ -343,9 +343,9 @@ export default function SyncPage() {
                                 <label className="sync-radio">
                                   <input
                                     type="radio"
-                                    name={`choice-${f.id}`}
+                                    name={`choice-${f.conflict_id || f.id}`}
                                     checked={Boolean(c && c.choice === 'custom')}
-                                    onChange={() => setChoice(f.id, 'custom')}
+                                    onChange={() => setChoice(f.conflict_id || f.id, 'custom')}
                                     disabled={busy}
                                   />
                                   <span>Custom</span>
@@ -355,7 +355,7 @@ export default function SyncPage() {
                                     className="settings-input sync-custom-input"
                                     value={c.value}
                                     onChange={(e) =>
-                                      setChoice(f.id, 'custom', e.target.value)
+                                      setChoice(f.conflict_id || f.id, 'custom', e.target.value)
                                     }
                                     placeholder="Value to write to both"
                                     disabled={busy}

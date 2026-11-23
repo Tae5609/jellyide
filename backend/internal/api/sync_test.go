@@ -100,8 +100,9 @@ func TestSyncConflictsEndpoint(t *testing.T) {
 		TrackID string `json:"track_id"`
 		AlbumID string `json:"album_id"`
 		Fields  []struct {
-			ID    string `json:"id"`
-			Field string `json:"field"`
+			ID         string `json:"id"`
+			ConflictID string `json:"conflict_id"`
+			Field      string `json:"field"`
 		} `json:"fields"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &groups); err != nil {
@@ -109,6 +110,11 @@ func TestSyncConflictsEndpoint(t *testing.T) {
 	}
 	if len(groups) != 1 || groups[0].TrackID != trackID || len(groups[0].Fields) != 2 {
 		t.Fatalf("groups = %+v, want one group with two fields", groups)
+	}
+	for _, f := range groups[0].Fields {
+		if f.ConflictID == "" || f.ConflictID != f.ID {
+			t.Errorf("field %s: conflict_id %q, want %q", f.Field, f.ConflictID, f.ID)
+		}
 	}
 
 	// Album filter.

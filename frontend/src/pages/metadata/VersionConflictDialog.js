@@ -62,7 +62,6 @@ export default function VersionConflictDialog({
       });
     });
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conflicts, edits, tracks]);
 
   const choiceOf = (trackId, field) => choices[`${trackId}.${field}`] || 'theirs';
