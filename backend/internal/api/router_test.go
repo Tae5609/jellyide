@@ -24,16 +24,21 @@ import (
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/musicbrainz"
 	"yt-scraper/internal/scanner"
+	"yt-scraper/internal/syncconf"
 	"yt-scraper/internal/ytdlp"
 )
 
 // noOpTagWriter implements metadata.TagWriter without touching Python or
-// real audio files: every call succeeds.
+// real audio files: every call succeeds. The re-read reports an error,
+// which the service treats as "cannot verify, proceed".
 type noOpTagWriter struct{}
 
 func (noOpTagWriter) WriteFields(string, map[string]interface{}) error { return nil }
-func (noOpTagWriter) EmbedCover(string, string) error                  { return nil }
-func (noOpTagWriter) ExtractCover(string, string) (bool, error)        { return false, nil }
+func (noOpTagWriter) ReadFields(string) (map[string]interface{}, error) {
+	return nil, os.ErrNotExist
+}
+func (noOpTagWriter) EmbedCover(string, string) error           { return nil }
+func (noOpTagWriter) ExtractCover(string, string) (bool, error) { return false, nil }
 
 // passAdmin is the test requireAdmin: every request counts as an admin.
 func passAdmin(next http.Handler) http.Handler { return next }
@@ -84,10 +89,11 @@ func newTestRouterFull(t *testing.T, mb *musicbrainz.Client, requireAdmin func(h
 		deps.MusicBrainz = mb
 	}
 	metaService := metadata.NewServiceWith(deps)
+	syncService := syncconf.NewService(libService, jobManager, noOpTagWriter{})
 
 	r := mux.NewRouter()
 	apiSub := r.PathPrefix("/api").Subrouter()
-	RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, yt, requireAdmin)
+	RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, yt, syncService, requireAdmin)
 	return r, downloader, libService, jobManager, yt, dir
 }
 

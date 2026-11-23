@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -426,6 +427,98 @@ func (s *Service) CountOpenConflicts(albumID string) (int, error) {
 // yet (T12 adds it); after T12 the extra delete is harmless.
 func (s *Service) DeleteTrackHistory(trackID string) error {
 	_, err := s.db.Exec("DELETE FROM metadata_changes WHERE track_id = ?", trackID)
+	return err
+}
+
+// RecordChange records one metadata_changes row in the text form the
+// history and revert flows expect (the same store path the edit path
+// uses, so resolutions are revertible).
+func (s *Service) RecordChange(trackID, field, oldValue, newValue, changeSetID string) {
+	s.insertChange(trackID, field, oldValue, newValue, changeSetID)
+}
+
+// RepointTrack moves a track row to a new file path, adopts the stored
+// fingerprint of the file it is pointed at and marks it in sync. The id
+// and the history rows are preserved (the T16 relink). No version bump:
+// the field values are unchanged, the row now refers to a file with the
+// same content.
+func (s *Service) RepointTrack(trackID, newPath string, size, mtime int64, tagsHash string) error {
+	_, err := s.db.Exec(
+		"UPDATE tracks SET path = ?, file_size = ?, file_mtime = ?, tags_hash = ?, state = ?, synced_at = ? WHERE id = ?",
+		newPath, size, mtime, tagsHash, TrackStateOK, nowSQL(), trackID)
+	return err
+}
+
+// ApplyFieldText sets one track field from its stored text form (the way
+// conflict rows carry values) and bumps the version: "" clears text
+// fields and int fields to NULL, "album" repoints the track to the target
+// album row (the albums table is keyed by artist + title), and int fields
+// are parsed. Field names come from the fixed canonical set.
+func (s *Service) ApplyFieldText(track *Track, field, value string) error {
+	textSQL := func(v string) interface{} {
+		if v == "" {
+			return nil
+		}
+		return v
+	}
+	intSQL := func(v string) (interface{}, error) {
+		if v == "" {
+			return nil, nil
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("value %q is not a valid integer for %s", v, field)
+		}
+		return n, nil
+	}
+	switch field {
+	case "title":
+		if value == "" {
+			return errors.New("title must not be empty")
+		}
+		_, err := s.db.Exec("UPDATE tracks SET title = ?, version = version + 1 WHERE id = ?", value, track.ID)
+		return err
+	case "artist", "album_artist", "genre", "composer", "comment":
+		_, err := s.db.Exec("UPDATE tracks SET "+field+" = ?, version = version + 1 WHERE id = ?", textSQL(value), track.ID)
+		return err
+	case "track_number", "disc_number", "year":
+		v, err := intSQL(value)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec("UPDATE tracks SET "+field+" = ?, version = version + 1 WHERE id = ?", v, track.ID)
+		return err
+	case "album":
+		artistName := ""
+		if track.Artist != nil {
+			artistName = *track.Artist
+		}
+		if artistName == "" {
+			album, err := s.GetAlbum(track.AlbumID)
+			if err != nil {
+				return err
+			}
+			artistName = album.Artist
+		}
+		artistID, err := s.EnsureArtist(artistName)
+		if err != nil {
+			return err
+		}
+		albumID, err := s.EnsureAlbum(artistID, value)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec("UPDATE tracks SET album_id = ?, version = version + 1 WHERE id = ?", albumID, track.ID)
+		return err
+	default:
+		return fmt.Errorf("unknown field %q", field)
+	}
+}
+
+// UpdateJobDetails replaces a job's details JSON (the T16/T17 pattern for
+// merging per-track results without restructuring the jobs package).
+func (s *Service) UpdateJobDetails(jobID, details string) error {
+	_, err := s.db.Exec("UPDATE jobs SET details = ? WHERE id = ?", details, jobID)
 	return err
 }
 

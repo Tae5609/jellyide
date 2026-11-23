@@ -23,6 +23,7 @@ import (
 	"yt-scraper/internal/library"
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/scanner"
+	"yt-scraper/internal/syncconf"
 	"yt-scraper/internal/ytdlp"
 )
 
@@ -77,7 +78,7 @@ func newAuthedRouter(t *testing.T, st *fakeRelease) (http.Handler, *auth.Service
 	r := mux.NewRouter()
 	apiSub := r.PathPrefix("/api").Subrouter()
 	svc.RegisterRoutes(apiSub)
-	RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, yt, svc.RequireAdmin)
+	RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, yt, syncconf.NewService(libService, jobManager, noOpTagWriter{}), svc.RequireAdmin)
 	return svc.Middleware(r), svc, yt, jobManager
 }
 
