@@ -72,7 +72,8 @@ to when a variable is empty.
 
 Every variable the server reads, with its default from the code
 (`backend/internal/auth/config.go`, `backend/internal/auth/oidc.go`,
-`backend/internal/auth/saml.go`, `backend/main.go`). Boolean variables
+`backend/internal/auth/saml.go`, `backend/internal/download/downloader.go`,
+`backend/main.go`). Boolean variables
 accept `1/true/yes/on` and `0/false/no/off`.
 
 | Variable | Default | Description |
@@ -107,7 +108,7 @@ accept `1/true/yes/on` and `0/false/no/off`.
 | `SAML_GROUPS_ATTR` | `groups` | Assertion attribute that carries the group list. |
 | `SAML_ADMIN_GROUP` | — (none) | Users whose group list contains this group become admins. |
 | `SAML_AUTO_CREATE` | `true` | Create a local account on first login. `false` = only pre-provisioned users may log in. |
-| `CONCURRENT_DOWNLOAD` | `2` | **Not read by the server today.** The download concurrency is hardcoded to 2 at startup and changed at runtime on the Settings page. Logged in [docs/plan/BUGS.md](./plan/BUGS.md). |
+| `CONCURRENT_DOWNLOAD` | `2` | Read at startup as the initial download concurrency limit: a missing, invalid or below-1 value falls back to the default of 2, and a value above 32 is clamped to 32. Can still be changed at runtime on the Settings page. |
 
 The compose files also set `IMAGE` (prod compose) and the host-side
 `PORT`/`MUSIC_DIR` mapping, which are compose-level, not server, variables.
