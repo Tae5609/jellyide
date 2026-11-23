@@ -53,7 +53,8 @@ music directory JellyIDE manages.
 - Smart analyzer: finds noisy shared patterns (`[Official Audio]` …) across an album for
   one-click cleanup; find/replace with literal, prefix, suffix and regular-expression
   operations and a dry-run preview.
-- Cover art: upload (jpeg/png, ≤10 MiB, ≤4000 px), extract from file, or fetch from an
+- Cover art: picked up automatically (image file in the folder, or the artwork embedded in
+  downloaded files when there is no image), or upload (jpeg/png, ≤10 MiB, ≤4000 px), extract from file, or fetch from an
   allowlisted URL; an embed job writes the art into every track of the album.
 - **MusicBrainz lookup**: search a release, review a track-mapping table with confidence
   scores, apply the proposals as pending edits.

@@ -129,8 +129,15 @@ Unknown track ids are silently skipped by the preview. The usual workflow is
 ## Cover art
 
 The cover panel shows the current album cover (`GET /api/library/albums/{id}/cover`, with a
-placeholder when there is none) and offers three ways to set it:
+placeholder when there is none). It is filled automatically by the scanner when possible,
+and can be set by hand in three ways:
 
+- **Automatic (scanner)** — downloads embed the video thumbnail in the audio file and
+  write no image next to it. When an album folder has no cover image file and the album has
+  no cover yet, a scan extracts the first embedded picture with `ffmpeg`, re-encodes it to
+  JPEG (thumbnails are often WebP), saves it as `cover.jpg` and uses it as the album cover.
+  Each album is tried once per server run, so albums without embedded art do not spawn
+  `ffmpeg` on every scan; an existing cover is never replaced.
 - **Upload** — file input or drag-and-drop. Client-side checks first; the server enforces:
   jpeg or png only (content sniffing), at most 10 MiB, at most 4000×4000 px. It is stored
   as `cover.jpg` / `cover.png` in the album directory and served under `/media/…`; a
@@ -263,7 +270,7 @@ native tab order to the page controls stays intact otherwise.
 | `L` | open lookup |
 | `H` | open history |
 | `?` | open the shortcuts help overlay |
-| `g` then `d` / `l` / `j` / `s` | global navigation to downloads / library / jobs / settings, in `App.js` |
+| `g` then `d` / `l` / `j` / `s` | global navigation to downloads / library / jobs / settings (second key within 1 s; ignored while typing), in `App.js` |
 
 `Ctrl+S` is captured (`preventDefault`) so the browser save dialog does not pop up. The help
 overlay lists them all; a "Keyboard shortcuts" button opens it.
