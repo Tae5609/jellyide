@@ -1,8 +1,9 @@
 # Authentication
 
-How JellyIDE authenticates users: the admin bootstrap, local accounts,
-self-registration modes, user administration, and single sign-on via OIDC
-or SAML 2.0 — plus the session, cookie and CSRF security model.
+How JellyIDE authenticates users: the admin bootstrap and first-run
+setup, local accounts, self-registration modes, user administration, and
+single sign-on via OIDC or SAML 2.0 — plus the session, cookie and CSRF
+security model.
 
 Environment variables are documented in
 [DEPLOYMENT.md](./DEPLOYMENT.md#environment-variables). A local Keycloak
@@ -12,7 +13,11 @@ instance for trying out both SSO protocols is in
 
 ## Table of contents
 
-- [Admin bootstrap](#admin-bootstrap)
+- [Admin bootstrap and first-run setup](#admin-bootstrap-and-first-run-setup)
+  - [Unattended pre-creation via the admin password](#unattended-pre-creation-via-the-admin-password)
+  - [First-run setup wizard](#first-run-setup-wizard)
+  - [Admin CLI bootstrap and recovery](#admin-cli-bootstrap-and-recovery)
+  - [Later starts](#later-starts)
 - [Local accounts](#local-accounts)
 - [Registration](#registration)
   - [Modes](#modes)
@@ -33,19 +38,91 @@ instance for trying out both SSO protocols is in
 - [Session, cookie and CSRF security model](#session-cookie-and-csrf-security-model)
 - [Disabling auth](#disabling-auth)
 
-## Admin bootstrap
+## Admin bootstrap and first-run setup
 
-On the **very first start** (database exists but has zero users), the
-server creates the admin account from:
+When auth is enabled (`AUTH_ENABLED` is on, the default) and the
+database still has **zero users**, exactly one of two paths creates the
+first admin account. Afterwards the stored users are the source of
+truth and neither path ever runs again.
+
+### Unattended pre-creation via the admin password
+
+`ADMIN_PASSWORD` set before the very first start (empty database): the
+server creates the admin account right away from
 
 - `ADMIN_USERNAME` (default `admin`)
 - `ADMIN_PASSWORD` (no default)
 
-If no users exist and `ADMIN_PASSWORD` is empty, the server refuses to
-start with `no users exist: set ADMIN_PASSWORD to bootstrap the admin
-account`. Once at least one user exists, both variables are ignored —
-the database is the source of truth. Change the bootstrap admin's
-password immediately (Users page, or `POST /api/auth/password`).
+This is the unattended path. The variables are only consulted while no
+users exist — they are never re-applied and never reset an existing
+password, so restarts and upgrades are safe. Omitting `ADMIN_PASSWORD`
+instead selects the setup wizard below; it does **not** refuse the start.
+
+### First-run setup wizard
+
+`ADMIN_PASSWORD` unset (or empty) on a database with zero users: the
+server starts in **first-run setup mode** and prints a one-time setup
+token to the log banner with the URL to open (`docker logs jelly-ide`
+shows it):
+
+```text
+==== JellyIDE first-run setup ====
+Open http://localhost:8080/setup and enter this setup token:
+...
+==================================
+```
+
+- Open **`<PUBLIC_URL>/setup`** in a browser and complete the wizard:
+  enter the token, pick the admin username and password. Username and
+  password follow the same rules as registration (see
+  [Local accounts](#local-accounts)), and the new account is created
+  active with admin rights.
+- While setup is pending, every API route answers
+  `503 {"error":"setup_required"}` (same for `/media/*`) — except
+  `GET /api/auth/providers` and the `GET /api/setup/status` /
+  `POST /api/setup/complete` pair the wizard itself uses. The SPA still
+  loads, which is how the `/setup` page is served.
+- The token is kept in memory only, is regenerated on every start until
+  setup completes, and is never persisted or logged anywhere else.
+  Failed attempts are rate limited per IP (`429`), a wrong token gets
+  `403`.
+- Completing the wizard creates the admin and starts a session for it
+  **immediately — no restart needed**. A second (or concurrent)
+  completion attempt gets `409 setup already complete`.
+
+### Admin CLI bootstrap and recovery
+
+The `admin` subcommand built into the server binary operates directly on
+the database (`DOWNLOAD_DIR/jellyide.db`) and works while the server is
+running. Besides recovery it can also do the bootstrap without the web
+wizard:
+
+```sh
+# bootstrap the first admin instead of using /setup
+./server admin create <username> --admin
+
+# recovery: locked out of the admin account
+./server admin reset-password admin            # prompts twice, no echo
+./server admin reset-password admin --generate # prints a strong password once
+./server admin list                            # id, provider, admin flag, status
+./server admin promote <user> | demote <user> | enable <user> | disable <user>
+./server admin unlock                          # clear the login rate limiter
+```
+
+In Docker, run them inside the container, e.g.
+`docker exec -it jelly-ide ./server admin list`. Creating the first
+user through the CLI ends setup mode just like the wizard does — no
+restart. Demote/disable refuse to touch the last active admin, the same
+guard the admin API applies. Note: `unlock` clears the in-memory login
+rate limiter of the process it runs in; to clear a running server's
+limiter, restart the server.
+
+### Later starts
+
+Once at least one user exists, both `ADMIN_USERNAME`/`ADMIN_PASSWORD`
+and setup mode are ignored — the database is the source of truth. Change
+the first admin's password immediately (Users page, or
+`POST /api/auth/password`).
 
 The admin is a normal local account: it can log in with username and
 password like any other user, and it can be demoted or deleted like any
