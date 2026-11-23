@@ -4,17 +4,57 @@ package download
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"yt-scraper/internal/jobs"
 	"yt-scraper/internal/scanner"
 )
+
+// DefaultMaxRetries is the automatic-retry count when DOWNLOAD_MAX_RETRIES
+// is unset.
+const DefaultMaxRetries = 2
+
+// maxRetriesBackoff is the automatic-retry backoff schedule, indexed by the
+// 1-based attempt number: 30s, 2m, 10m, capped at 10m.
+var maxRetriesBackoff = []time.Duration{30 * time.Second, 2 * time.Minute, 10 * time.Minute}
+
+// retryBackoff returns the delay before automatic retry number n (1-based),
+// capped at the last entry of the schedule.
+func retryBackoff(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	if n-1 >= len(maxRetriesBackoff) {
+		return maxRetriesBackoff[len(maxRetriesBackoff)-1]
+	}
+	return maxRetriesBackoff[n-1]
+}
+
+// MaxRetriesFromEnv reads DOWNLOAD_MAX_RETRIES. The default is 2; 0
+// disables automatic retry. Empty or invalid values fall back to the
+// default (a negative value is invalid too).
+func MaxRetriesFromEnv() int {
+	v := os.Getenv("DOWNLOAD_MAX_RETRIES")
+	if v == "" {
+		return DefaultMaxRetries
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		//nolint:gosec // G706 - v is the operator's own env value, not remote input; %q keeps it one token
+		log.Printf("download: invalid DOWNLOAD_MAX_RETRIES %q, using default %d", v, DefaultMaxRetries)
+		return DefaultMaxRetries
+	}
+	return n
+}
 
 // Details describes one video to download, as sent by the frontend.
 type Details struct {
@@ -25,7 +65,8 @@ type Details struct {
 	Thumbnail string `json:"thumbnail"`
 }
 
-// Downloader manages the download queue and the concurrency limit.
+// Downloader manages the download queue, the concurrency limit and the
+// automatic retry of transiently failed downloads.
 type Downloader struct {
 	jobManager      *jobs.Manager
 	scanner         *scanner.Scanner
@@ -37,6 +78,8 @@ type Downloader struct {
 	mu              sync.RWMutex
 	cond            *sync.Cond
 	ytDlpPath       string
+	maxRetries      int
+	now             func() time.Time
 }
 
 // NewDownloader builds a Downloader, re-queues unfinished download jobs
@@ -48,6 +91,9 @@ type Downloader struct {
 // the default of 2 with a warning, and a value above 32 is clamped to 32
 // with a warning. SetLimit (e.g. via POST /api/config) still overrides the
 // limit afterwards.
+//
+// The automatic-retry count comes from DOWNLOAD_MAX_RETRIES (default 2,
+// 0 disables).
 func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir string) *Downloader {
 	limit := 2
 	raw := os.Getenv("CONCURRENT_DOWNLOAD")
@@ -74,6 +120,8 @@ func NewDownloader(jobManager *jobs.Manager, s *scanner.Scanner, downloadDir str
 		queue:           make(chan string, 5000), // Increased buffer
 		concurrentLimit: limit,
 		ytDlpPath:       "yt-dlp",
+		maxRetries:      MaxRetriesFromEnv(),
+		now:             time.Now,
 	}
 	d.cond = sync.NewCond(&d.mu)
 
@@ -157,6 +205,31 @@ func (d *Downloader) GetProxy() string {
 	return d.proxy
 }
 
+// Retry manually re-queues one failed download job (via jobs.Manager.
+// RetryJob) and wakes the dispatcher so it runs without waiting for the
+// next poll tick.
+func (d *Downloader) Retry(id string) (*jobs.Job, error) {
+	job, err := d.jobManager.RetryJob(id)
+	if err != nil {
+		return nil, err
+	}
+	d.queue <- id
+	return job, nil
+}
+
+// RetryFailedDownloads re-queues every failed download job and wakes the
+// dispatcher for each of them. It returns the number of retried jobs.
+func (d *Downloader) RetryFailedDownloads() (int, error) {
+	retried, err := d.jobManager.RetryFailedDownloads()
+	if err != nil {
+		return 0, err
+	}
+	for _, j := range retried {
+		d.queue <- j.ID
+	}
+	return len(retried), nil
+}
+
 // setStatus updates the job status and logs failures; a status write must
 // never fail the download pipeline itself.
 func (d *Downloader) setStatus(id string, status jobs.JobStatus, progress, errMsg string) {
@@ -167,6 +240,9 @@ func (d *Downloader) setStatus(id string, status jobs.JobStatus, progress, errMs
 
 func (d *Downloader) dispatcher() {
 	for jobID := range d.queue {
+		if d.deferredRetry(jobID) {
+			continue
+		}
 		d.mu.Lock()
 		for d.activeDownloads >= d.concurrentLimit {
 			d.cond.Wait()
@@ -184,6 +260,34 @@ func (d *Downloader) dispatcher() {
 			d.processDownload(id)
 		}(jobID)
 	}
+}
+
+// deferredRetry reports whether the queued job is an automatic retry whose
+// next_retry_at is still in the future. When it is, the job is not run
+// now: it is re-queued with time.AfterFunc once the deadline passes, and
+// the dispatcher moves on.
+func (d *Downloader) deferredRetry(jobID string) bool {
+	job, err := d.jobManager.GetJob(jobID)
+	if err != nil || job == nil || job.Status != jobs.StatusQueued || !job.NextRetryAt.Valid {
+		return false
+	}
+	if !job.NextRetryAt.Time.After(d.now()) {
+		return false
+	}
+	d.scheduleRequeue(jobID, time.Until(job.NextRetryAt.Time))
+	return true
+}
+
+// scheduleRequeue pushes jobID back onto the queue after delay. The queue
+// buffer absorbs the send; a stuck send only happens if the buffer is full
+// of 5000 pending ids.
+func (d *Downloader) scheduleRequeue(jobID string, delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+	time.AfterFunc(delay, func() {
+		d.queue <- jobID
+	})
 }
 
 func (d *Downloader) processDownload(jobID string) {
@@ -229,7 +333,7 @@ func (d *Downloader) processDownload(jobID string) {
 		if len(errStr) > 500 {
 			errStr = errStr[:500]
 		}
-		d.setStatus(jobID, jobs.StatusFailed, "", errStr)
+		d.failOrRetry(job, errStr)
 	} else {
 		d.setStatus(jobID, jobs.StatusCompleted, "100%", "")
 
@@ -264,6 +368,72 @@ func buildArgs(details Details, outTemplate, proxy string) []string {
 		args = append(args, "--proxy", proxy)
 	}
 	return args
+}
+
+// failOrRetry handles a yt-dlp failure: a transient failure with retry
+// budget left is scheduled for an automatic retry (status queued,
+// next_retry_at armed, attempts incremented); everything else is marked
+// failed with the truncated stderr.
+func (d *Downloader) failOrRetry(job *jobs.Job, stderr string) {
+	if d.maxRetries > 0 && job.Attempts < d.maxRetries && isTransient(stderr) {
+		next := job.Attempts + 1
+		nextAt := d.now().Add(retryBackoff(next))
+		errMsg := fmt.Sprintf("retrying (%d/%d): %s", next, d.maxRetries, stderr)
+		if err := d.jobManager.ScheduleRetry(job.ID, next, nextAt, errMsg); err != nil {
+			log.Printf("download: schedule retry for job %s: %v", job.ID, err)
+			d.setStatus(job.ID, jobs.StatusFailed, "", stderr)
+			return
+		}
+		d.queue <- job.ID
+		return
+	}
+	d.setStatus(job.ID, jobs.StatusFailed, "", stderr)
+}
+
+// transientTextMarkers, permanentTextMarkers and the two HTTP-code
+// regular expressions are the classifier rules for yt-dlp stderr.
+var (
+	transientTextMarkers = []string{
+		"timed out",
+		"Connection reset",
+		"Temporary failure in name resolution",
+		"Unable to download webpage",
+		"IncompleteRead",
+	}
+	permanentTextMarkers = []string{
+		"Video unavailable",
+		"Private video",
+		"members-only",
+		"copyright",
+	}
+	transientHTTP = regexp.MustCompile(`HTTP Error (5\d{2}|429)`)
+	permanentHTTP = regexp.MustCompile(`HTTP Error (403|404)`)
+)
+
+// isTransient classifies yt-dlp stderr: true when the failure looks
+// temporary (network errors or HTTP 5xx/429) and a retry may succeed.
+// Permanent failures (unavailable, private, members-only or copyrighted
+// videos, HTTP 403/404) and anything unrecognised are permanent. A
+// permanent marker overrides a transient one in the same message (e.g.
+// "Unable to download webpage: HTTP Error 404" is permanent).
+func isTransient(stderr string) bool {
+	for _, m := range permanentTextMarkers {
+		if strings.Contains(stderr, m) {
+			return false
+		}
+	}
+	if permanentHTTP.MatchString(stderr) {
+		return false
+	}
+	if transientHTTP.MatchString(stderr) {
+		return true
+	}
+	for _, m := range transientTextMarkers {
+		if strings.Contains(stderr, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitize(s string) string {

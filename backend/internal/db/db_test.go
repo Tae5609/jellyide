@@ -248,6 +248,87 @@ func TestMigrateUpgradesOldSchema(t *testing.T) {
 	}
 }
 
+// TestMigrateAddsJobsRetryColumns verifies a database whose jobs table
+// predates the retry columns (T14) gains them via the guarded ALTER, with
+// the legacy row defaulted, and that the migration stays idempotent.
+func TestMigrateAddsJobsRetryColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	legacy, err := sqlx.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE jobs (
+		id         TEXT     PRIMARY KEY,
+		type       TEXT     NOT NULL,
+		status     TEXT     NOT NULL,
+		details    TEXT,
+		progress   TEXT,
+		error      TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatalf("create legacy jobs table: %v", err)
+	}
+	if _, err := legacy.Exec(`INSERT INTO jobs (id, type, status) VALUES ('j1', 'download', 'failed')`); err != nil {
+		t.Fatalf("insert legacy job: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	database, err := NewDB(path)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	cols := tableColumns(t, path, "jobs")
+	if !cols["attempts"] || !cols["next_retry_at"] {
+		t.Fatalf("jobs missing retry columns after migration (have %v)", cols)
+	}
+
+	// The legacy row was defaulted.
+	var (
+		attempts  int
+		nextRetry sql.NullTime
+	)
+	if err := database.Get(&attempts, `SELECT attempts FROM jobs WHERE id = 'j1'`); err != nil {
+		t.Fatalf("select attempts: %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("legacy row attempts = %d, want 0", attempts)
+	}
+	if err := database.Get(&nextRetry, `SELECT next_retry_at FROM jobs WHERE id = 'j1'`); err != nil {
+		t.Fatalf("select next_retry_at: %v", err)
+	}
+	if nextRetry.Valid {
+		t.Fatalf("legacy row next_retry_at = %v, want NULL", nextRetry.Time)
+	}
+
+	// A fresh database gets the columns as well.
+	freshPath := filepath.Join(t.TempDir(), "fresh.db")
+	fresh, err := NewDB(freshPath)
+	if err != nil {
+		t.Fatalf("fresh NewDB: %v", err)
+	}
+	_ = fresh.Close()
+	freshCols := tableColumns(t, freshPath, "jobs")
+	if !freshCols["attempts"] || !freshCols["next_retry_at"] {
+		t.Fatalf("fresh jobs table missing retry columns (have %v)", freshCols)
+	}
+
+	// Migration is idempotent: a second open must not fail.
+	if err := database.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	again, err := NewDB(path)
+	if err != nil {
+		t.Fatalf("second NewDB: %v", err)
+	}
+	_ = again.Close()
+}
+
 // TestAddColumnIfMissingDirect drives the helper on a throwaway table.
 func TestAddColumnIfMissingDirect(t *testing.T) {
 	dir := t.TempDir()

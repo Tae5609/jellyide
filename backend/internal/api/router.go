@@ -29,6 +29,8 @@ func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service,
 	// Job APIs
 	r.HandleFunc("/jobs", getJobs(jm)).Methods("GET")
 	r.HandleFunc("/jobs/clear", clearJobs(jm)).Methods("POST")
+	r.HandleFunc("/jobs/{id}/retry", retryJob(d)).Methods("POST")
+	r.HandleFunc("/jobs/retry-failed", retryFailedJobs(d)).Methods("POST")
 
 	// Config APIs
 	r.HandleFunc("/config", getConfig(d)).Methods("GET")
@@ -165,6 +167,34 @@ func clearJobs(jm *jobs.Manager) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func retryJob(d *download.Downloader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["id"]
+		job, err := d.Retry(id)
+		switch {
+		case errors.Is(err, jobs.ErrJobNotFound):
+			sendJSONError(w, "job not found", http.StatusNotFound)
+		case errors.Is(err, jobs.ErrNotRetryable):
+			sendJSONError(w, "job is not a failed download", http.StatusConflict)
+		case err != nil:
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+		default:
+			writeJSON(w, job)
+		}
+	}
+}
+
+func retryFailedJobs(d *download.Downloader) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		n, err := d.RetryFailedDownloads()
+		if err != nil {
+			sendJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]int{"retried": n})
 	}
 }
 

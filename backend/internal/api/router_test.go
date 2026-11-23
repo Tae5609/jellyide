@@ -256,6 +256,118 @@ func TestClearJobs(t *testing.T) {
 	}
 }
 
+// seedJob creates a job of the given type and moves it to the given status.
+func seedJob(t *testing.T, jm *jobs.Manager, jobType jobs.JobType, status jobs.JobStatus) *jobs.Job {
+	t.Helper()
+	job, err := jm.CreateJob(jobType, map[string]string{"video_id": "abc"})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if err := jm.UpdateJobStatus(job.ID, status, "10%", "something broke"); err != nil {
+		t.Fatalf("UpdateJobStatus: %v", err)
+	}
+	return job
+}
+
+func errorBody(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	return body["error"]
+}
+
+func TestRetryJobEndpoint(t *testing.T) {
+	h, _, _, jm, _ := newTestRouter(t)
+
+	failedDownload := seedJob(t, jm, jobs.TypeDownload, jobs.StatusFailed)
+	failedScan := seedJob(t, jm, jobs.TypeScan, jobs.StatusFailed)
+	completedDownload := seedJob(t, jm, jobs.TypeDownload, jobs.StatusCompleted)
+	queuedDownload := seedJob(t, jm, jobs.TypeDownload, jobs.StatusQueued)
+
+	// Unknown job: 404.
+	rec := postRaw(t, h, "/api/jobs/no-such-job/retry", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown id: got %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if msg := errorBody(t, rec); msg != "job not found" {
+		t.Fatalf("error = %q, want %q", msg, "job not found")
+	}
+
+	for name, id := range map[string]string{
+		"failed scan":        failedScan.ID,
+		"completed download": completedDownload.ID,
+		"queued download":    queuedDownload.ID,
+	} {
+		rec := postRaw(t, h, "/api/jobs/"+id+"/retry", "")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%s: got %d, want 409: %s", name, rec.Code, rec.Body.String())
+		}
+		if msg := errorBody(t, rec); msg != "job is not a failed download" {
+			t.Fatalf("%s: error = %q, want %q", name, msg, "job is not a failed download")
+		}
+	}
+
+	// Failed download: 200 with the updated job.
+	rec = postRaw(t, h, "/api/jobs/"+failedDownload.ID+"/retry", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var job jobs.Job
+	if err := json.Unmarshal(rec.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode job: %v", err)
+	}
+	if job.ID != failedDownload.ID {
+		t.Fatalf("job id = %s, want %s", job.ID, failedDownload.ID)
+	}
+	if job.Status != jobs.StatusQueued {
+		t.Fatalf("status = %s, want queued", job.Status)
+	}
+	if job.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", job.Attempts)
+	}
+	if job.Error != "" || job.Progress != "" {
+		t.Fatalf("error/progress = %q/%q, want cleared", job.Error, job.Progress)
+	}
+}
+
+func TestRetryFailedEndpoint(t *testing.T) {
+	h, d, _, jm, _ := newTestRouter(t)
+	// Freeze the dispatcher so the re-queued jobs stay "queued" and the
+	// second pass below is deterministic (no async re-failure in between).
+	d.SetLimit(0)
+
+	seedJob(t, jm, jobs.TypeDownload, jobs.StatusFailed)
+	seedJob(t, jm, jobs.TypeDownload, jobs.StatusFailed)
+	seedJob(t, jm, jobs.TypeScan, jobs.StatusFailed)
+	seedJob(t, jm, jobs.TypeDownload, jobs.StatusCompleted)
+
+	rec := postRaw(t, h, "/api/jobs/retry-failed", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry-failed: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]int
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["retried"] != 2 {
+		t.Fatalf("retried = %d, want 2", body["retried"])
+	}
+
+	// Nothing left to retry.
+	rec = postRaw(t, h, "/api/jobs/retry-failed", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second retry-failed: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["retried"] != 0 {
+		t.Fatalf("second pass retried = %d, want 0", body["retried"])
+	}
+}
+
 func TestLibraryReadEndpoints(t *testing.T) {
 	h, _, lib, _, dir := newTestRouter(t)
 
