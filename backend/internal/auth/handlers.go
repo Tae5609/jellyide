@@ -253,12 +253,17 @@ func verifyLoginCSRF(w http.ResponseWriter, r *http.Request, token string) bool 
 
 // handleRegister: POST /api/auth/register (public).
 // Creates a local user in open or approval mode; in admin_only mode the
-// endpoint answers 403. Uses the same in-memory failure limiter as login.
+// endpoint answers 403. Like login, the body must carry the login-CSRF
+// token (double-submit, see verifyLoginCSRF): without it a cross-site
+// form POST could create an account and, in open mode, pin the victim's
+// browser with a session. Uses the same in-memory failure limiter as
+// login.
 func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Email    string `json:"email"`
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		Email     string `json:"email"`
+		CSRFToken string `json:"csrf_token"`
 	}
 	if decodeJSONBody(w, r, &req) != nil {
 		return
@@ -274,7 +279,14 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mode == RegistrationModeAdminOnly {
+		// This 403 keeps its precedence: it answers before the CSRF
+		// check, as it already did.
 		writeJSONError(w, http.StatusForbidden, "registration is disabled")
+		return
+	}
+	// The token is verified before any account work, in open and
+	// approval mode alike.
+	if !verifyLoginCSRF(w, r, req.CSRFToken) {
 		return
 	}
 

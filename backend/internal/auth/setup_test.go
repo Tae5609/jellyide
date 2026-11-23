@@ -241,6 +241,38 @@ func TestSetupCompleteValidation(t *testing.T) {
 	}
 }
 
+// Regression (T12b): the setup completion body went through a plain
+// json.NewDecoder without the 1 MiB cap T12 put on every other JSON
+// endpoint. An oversized body must be rejected with 413 before an admin
+// is created, and a valid body must still complete setup.
+func TestSetupCompleteOversizedBody(t *testing.T) {
+	svc := newSetupService(t)
+	h := newSetupHandler(svc)
+	token := setupToken(t, svc)
+
+	body := `{"token":"` + token + `","username":"firstadmin","password":"` + strings.Repeat("a", maxAuthBody+1024) + `"}`
+	rec := doReq(t, h, http.MethodPost, "/api/setup/complete", body, nil)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body: got %d, want 413", rec.Code)
+	}
+	if n, _ := svc.CountUsers(); n != 0 {
+		t.Fatalf("users after oversized body = %d, want 0", n)
+	}
+	if !svc.SetupRequired() {
+		t.Fatal("setup must still be required after an oversized body")
+	}
+
+	// A valid body still completes setup (the cap did not break the flow).
+	rec = doReq(t, h, http.MethodPost, "/api/setup/complete",
+		map[string]string{"token": token, "username": "firstadmin", "password": "password-123"}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("valid body: got %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	if n, _ := svc.CountUsers(); n != 1 {
+		t.Fatalf("users after valid complete = %d, want 1", n)
+	}
+}
+
 func TestSetupRateLimit(t *testing.T) {
 	svc := newSetupService(t)
 	h := newSetupHandler(svc)

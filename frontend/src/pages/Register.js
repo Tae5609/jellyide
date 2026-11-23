@@ -62,11 +62,27 @@ export default function Register() {
     }
     setSubmitting(true);
     try {
+      // Login-CSRF: the backend requires the double-submit token from
+      // GET /auth/csrf for registration as well (same contract as
+      // login), so a cross-site form POST cannot create an account.
+      // Fetch a fresh token per attempt; the double-submit cookie rides
+      // along.
+      let csrfToken = '';
+      try {
+        const csrfRes = await apiFetch('/auth/csrf');
+        if (csrfRes.ok) {
+          const data = await csrfRes.json();
+          csrfToken = (data && data.token) || '';
+        }
+      } catch (err) {
+        // The registration attempt itself will surface the failure.
+      }
       const res = await apiFetch('/auth/register', {
         method: 'POST',
         body: JSON.stringify({
           username,
           password,
+          csrf_token: csrfToken,
           ...(email ? { email } : {}),
         }),
       });
