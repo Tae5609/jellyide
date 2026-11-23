@@ -153,3 +153,5 @@ Orchestrator owned and shipped: T13c (#36), T12 (#34, incl. the 18× auth-suite 
 5. **Test hardening:** Playwright e2e for the first-run setup wizard and the sync-conflict resolution flows; raise coverage threshold.
 
 **Completion note:** with this PR merged, the roadmap is fully delivered. The orchestrator then touches `docs/plan/logs/ORCHESTRATOR_FINISHED` per the supervised-restart order and stops.
+
+- 10:55 Ops note: first push of `chore/plan-final-report` produced no CI run (transient suppression, same symptom as the 03:15 incident; resolved there by the next ref-changing push). This amendment commit exists to make the ref fire.
