@@ -35,13 +35,17 @@ directory, so one volume is the whole deployment.
 `/mnt/media/music` read/write.
 
 ```sh
-# Set the password for the first-start admin account (see
-# docs/AUTHENTICATION.md, "Admin bootstrap"):
+# Optional — for unattended installs: pre-create the admin account on
+# the first start (see docs/AUTHENTICATION.md, "Admin bootstrap").
+# It is only used while no users exist and is never re-applied.
 export ADMIN_PASSWORD='change-me'
 docker compose up --build -d
 ```
 
-Then open <http://localhost:8080> and log in as `admin`.
+Then open <http://localhost:8080> and log in as `admin`. If you left
+`ADMIN_PASSWORD` unset, the server starts in first-run setup mode: open
+<http://localhost:8080/setup> and complete the wizard with the one-time
+setup token printed to the server logs.
 
 ### Production (prebuilt image)
 
@@ -50,13 +54,15 @@ its settings from a `.env` file:
 
 ```sh
 cp .env.example .env
-# Edit .env: at minimum set ADMIN_PASSWORD and PUBLIC_URL.
+# Edit .env: at minimum set PUBLIC_URL for anything beyond localhost.
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-`ADMIN_PASSWORD` uses the `${VAR:?}` syntax, so `docker compose` refuses to
-start until it is set. The password is only consumed on the very first
-start (empty database); afterwards the stored admin account wins.
+`ADMIN_PASSWORD` is optional. Set it to pre-create the admin account on
+the very first start (empty database); afterwards the stored admin
+account wins. If it is unset, the server starts in first-run setup mode
+instead and serves the setup wizard (or the admin CLI bootstraps the
+account) — see [AUTHENTICATION.md](./AUTHENTICATION.md).
 
 Both compose files pass every auth/registration variable through as
 `${VAR:-default}` — the defaults below are the ones the Go code falls back
@@ -77,7 +83,7 @@ accept `1/true/yes/on` and `0/false/no/off`.
 | `AUTH_LOCAL_ENABLED` | `true` | Allow username/password (local) login and self-registration. |
 | `COOKIE_SECURE` | `false` | Set the `Secure` flag on the session and OIDC-state cookies. Use `true` when serving over HTTPS. |
 | `ADMIN_USERNAME` | `admin` | Username of the bootstrapped admin account (first start only). |
-| `ADMIN_PASSWORD` | — (none) | Password for the bootstrapped admin account (first start only). Required when the database has no users; the server refuses to start without it. |
+| `ADMIN_PASSWORD` | — (none) | Optional. Pre-creates the bootstrapped admin account on the first start with an empty database. If unset, first-run setup (the wizard or the admin CLI) creates the admin. |
 | `PUBLIC_URL` | `http://localhost:8080` | Public base URL of this instance as the browser sees it. Builds the OIDC redirect URI and the SAML metadata/ACS URLs — it must be reachable from the browser and from the IdP. |
 | `REGISTRATION_MODE` | `admin_only` | Initial registration mode: `admin_only`, `open` or `approval`. Seeded into the database once at first start; afterwards the admin UI wins over this variable. |
 | `OIDC_ENABLED` | `false` | Enable the OIDC (SSO) login. Requires `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`. |
@@ -229,7 +235,7 @@ copy `jellyide.db` alone while the server runs — copy the `.db`,
 
 | Symptom | Cause / fix |
 |---|---|
-| `no users exist: set ADMIN_PASSWORD to bootstrap the admin account` at first start | The database is empty and `ADMIN_PASSWORD` was not set. Set it and restart; the admin is created exactly once. |
+| API calls answer `503 {"error":"setup_required"}` and the app shows the setup page at `/setup` | First-run setup mode: the database has no users and `ADMIN_PASSWORD` was unset. Open `/setup` and complete the wizard with the one-time setup token printed to the server logs (`docker logs jelly-ide`), or restart once with `ADMIN_PASSWORD` set to pre-create the admin. |
 | Login works in the browser but OIDC/SAML redirect fails or loops | `PUBLIC_URL` does not match what the browser sees (wrong scheme/host/port), so the callback URL or the `Secure` cookie flag is off. Set `PUBLIC_URL` and `COOKIE_SECURE=true` behind TLS. |
 | OIDC login redirects back to `/login?error=invalid+sso+state` | The state cookie was dropped (10-minute TTL, or blocked by a cross-site cookie policy) or the callback came from another tab. Retry the login from the same browser session. |
 | SAML fails with a metadata error at startup | The IdP metadata URL is unreachable or invalid at boot — the server treats a broken SAML config as fatal and does not start. Fix `SAML_IDP_METADATA_URL`/`SAML_IDP_METADATA_FILE` and restart. |
