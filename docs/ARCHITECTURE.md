@@ -90,21 +90,30 @@ was removed; see `docs/plan/BUGS.md`).
 `main.go` builds one `mux.Router`, mounts the subrouters and wraps the whole thing:
 
 ```go
-handler := authSvc.Middleware(r)   // backend/main.go
+handler := securityHeaders(authSvc.Middleware(r)) // backend/main.go
+handler = authSvc.SetupGate(handler)              // 503s API + media while setup is pending
 ```
+
+`securityHeaders` adds the browser hardening headers (CSP, `X-Content-Type-Options`,
+`X-Frame-Options`, `Referrer-Policy`); the setup gate answers
+`503 {"error":"setup_required"}` for every API/media route — except
+`/api/auth/providers` and `/api/setup/*` — while first-run setup is pending, and opens
+without a restart once the first user exists.
 
 For every request, `Service.Middleware` (`backend/internal/auth/middleware.go`):
 
 1. If `AUTH_ENABLED=false` (`auth.Config.Enabled`) → pass through; the anonymous superuser
    applies (see `/api/auth/me`).
-2. Else classify the path with `isPublicPath`: everything outside `/api/` and `/media/`, plus
-   `/api/auth/*` except `/api/auth/me`, `/api/auth/logout` and `/api/auth/password`, is
-   public → pass through.
+2. Else classify the path with `isPublicPath`: everything outside `/api/` and `/media/`,
+   `/api/auth/*` except `/api/auth/me`, `/api/auth/logout` and `/api/auth/password`, and
+   `/api/setup/*`, is public → pass through.
 3. Protected paths (`/api/*` and `/media/*`): resolve the `jellyide_session` cookie via
    `Service.UserFromRequest` (sha256 hash lookup, expiry + sliding renewal, active-status
    check). Failure → `401 {"error":"unauthorized"}`.
 4. On `POST`/`PUT`/`PATCH`/`DELETE`, require the header `X-Requested-With: XMLHttpRequest`
-   (CSRF guard) → missing or wrong → `403 {"error":"csrf"}`.
+   (CSRF guard) → missing or wrong → `403 {"error":"csrf"}`. The public login/register
+   endpoints are guarded by the double-submit login-CSRF token instead
+   (`GET /api/auth/csrf`, issued and verified in `handlers.go`).
 5. Store the user in the request context (`userContextKey{}`), continue to the matched
    handler. Handlers read it back with `UserFromContext`.
 
@@ -126,17 +135,20 @@ table, 7-day TTL, slid forward when under 6 days remain, purged hourly
 
 | Package | Responsibility (from the code) |
 |---|---|
-| `backend/main.go` | Entry point: loads env (`getEnv`), opens the DB, bootstraps auth (`auth.NewService` — creates the admin when `users` is empty and `ADMIN_PASSWORD` is set), enables OIDC/SAML before route registration, wires services, mounts `/api`, `/media/` and the SPA fallback, serves `:PORT` (8080) with a 10 s read-header timeout |
-| `internal/api` | Route table + handlers for download, jobs, config, library, metadata, cover and lookup endpoints; JSON helpers; typed-error → status mapping |
-| `internal/auth` | `Config`/env loading, `Service`, local login + bcrypt (`password.go`), registration modes and users/sessions store (`store.go`), login rate limiter and auth handlers (`handlers.go`), middleware + `RequireAdmin` (`middleware.go`), session cookie lifecycle (`session.go`), admin user management + settings (`admin.go`), OIDC authorization-code flow with PKCE/state/nonce (`oidc.go`), SAML 2.0 service provider (`saml.go`), password hashing (`password.go`) |
+| `backend/main.go` | Entry point: loads env (`getEnv`), opens the DB, bootstraps auth (`auth.NewService` — creates the admin when `users` is empty and `ADMIN_PASSWORD` is set, otherwise arms the first-run setup mode), enables OIDC/SAML before route registration, wires services, mounts `/api`, `/media/` (extension- and traversal-filtered) and the SPA fallback, adds the security headers and the setup gate, serves `:PORT` (8080) with conservative timeouts (10 s read-header, 30 s read, 120 s idle, no write timeout for media streams); also the `server admin` recovery CLI subcommand |
+| `internal/api` | Route table + handlers for download, jobs (incl. the retry endpoints), config, library, metadata, cover and lookup endpoints, the sync-conflict surface and the yt-dlp admin endpoints; JSON helpers (1 MiB body cap, `413` on overflow); typed-error → status mapping |
+| `internal/auth` | `Config`/env loading, `Service`, local login + bcrypt (`password.go`), registration modes and users/sessions store (`store.go` — the last-active-admin guard runs inside the write transaction), login rate limiter, the double-submit login-CSRF and the auth handlers (`handlers.go`), first-run setup wizard + setup gate (`setup.go`), middleware + `RequireAdmin` (`middleware.go`), session cookie lifecycle (`session.go`), admin user management + settings (`admin.go`), audit log (`audit.go`), OIDC authorization-code flow with PKCE/state/nonce (`oidc.go`), SAML 2.0 service provider (`saml.go`), password hashing (`password.go`) |
 | `internal/db` | SQLite open with split pools (`DB` embeds the read pool; `Exec`/`NamedExec`/`Beginx` route to a single write connection), per-connection pragmas, `migrate()` (create tables, guarded `ALTER TABLE` for `users.status`, the flexible track tag columns and `metadata_changes.change_set_id`) |
-| `internal/download` | `Details` payload, yt-dlp command builder, dispatcher goroutine with a 5000-slot queue channel, concurrency limit + proxy (in-memory, runtime), crash recovery re-queues `queued`/`downloading` jobs at startup |
-| `internal/scanner` | Walks `DOWNLOAD_DIR`, probes `.flac`/`.mp3`/`.m4a`/`.aac` with ffprobe, parses Vorbis/ID3 tag fields, `EnsureArtist`/`EnsureAlbum`/`UpsertTrack`, cover detection (`cover.jpg`, `folder.jpg`, …) |
-| `internal/library` | Artist/album/track model (`Artist`, `Album`, `Track`), queries and mutations, `RenameAlbum` (directory rename + tag rewrite + DB sync), deletes, `SaveCoverArt`/`CoverFilePath` (media-URL ↔ music-dir path mapping with traversal checks) |
+| `internal/download` | `Details` payload, yt-dlp command builder, dispatcher goroutine with a 5000-slot queue channel, concurrency limit (startup: `CONCURRENT_DOWNLOAD` env var, default 2, clamped 32) + proxy (in-memory, runtime), automatic retry of transient failures (`DOWNLOAD_MAX_RETRIES`, 30 s/2 min/10 min backoff), manual retry endpoints, per-job yt-dlp binary resolver (managed updater), crash recovery re-queues `queued`/`downloading` jobs at startup |
+| `internal/scanner` | Walks `DOWNLOAD_DIR`, probes `.flac`/`.mp3`/`.m4a`/`.aac` with ffprobe, parses Vorbis/ID3 tag fields, `EnsureArtist`/`EnsureAlbum`/`UpsertTrack`, cover detection (`cover.jpg`, `folder.jpg`, …; when the folder has no image and the album has no cover yet, the first embedded picture is extracted with ffmpeg, re-encoded to JPEG, saved as `cover.jpg` and set as the cover — tried at most once per album per process); sync-aware upsert (`syncTrack`) — fingerprint comparison, `file_wins`/`db_wins`/`ask` policy dispatch, conflict recording, ghost/missing detection |
+| `internal/library` | Artist/album/track model (`Artist`, `Album`, `Track`), queries and mutations, `RenameAlbum` (directory rename + tag rewrite + DB sync), deletes, `SaveCoverArt`/`CoverFilePath` (media-URL ↔ music-dir path mapping with traversal checks); the sync bookkeeping — tag normalization + `tags_hash` (`tagsync.go`), sync state/conflict/trash stores and the `sync_conflict_policy` setting (`sync.go`) |
+| `internal/syncconf` | The user-chosen resolution flows on top of the library stores: resolve (`db`/`file`/`custom`, through a metadata job so the outcome is revertible), dismiss, resolve-all, missing-track listing + relink/delete, trash listing/restore/purge (30-day retention), the policy admin accessors |
+| `internal/ytdlp` | The managed yt-dlp binary: checksum-verified downloads from a fixed https-only GitHub release allowlist (stable/nightly), atomic swap with `yt-dlp.prev` rollback, the settings (auto-update on/off, 6–168 h interval, channel), the auto-update loop (first-start install + interval checks) and the admin API backing |
+| `internal/fsutil` | Filesystem helpers shared by the rename/trash paths, notably `SafeRename` — a rename that refuses to clobber an existing target (the displaced file goes to the trash instead) |
 | `internal/metadata` | Title-pattern analyzer (`findSignificantPatterns`), find/replace preview (`PreviewChanges`), the job-backed apply path (`ApplyTrackEdits`, `runApplyJob`, `applyEditsToTrack`), history + revert (`history.go`), cover policy (`cover.go`: validation, allowlist, embed/extract jobs), MusicBrainz lookup mapping (`lookup.go`), tag writer interface (`tags.go`, production: `pythonTagWriter`) |
 | `internal/musicbrainz` | HTTP client for the MusicBrainz web service: shared token-bucket rate limiter (1 req/s), 10 s timeout, bounded 10-minute response cache (256 entries), release search + track mapping (exact number match, then Levenshtein title similarity) |
 | `backend/update_metadata.py` | Tag writer/reader on the audio files (FLAC/MP3/Ogg/M4A via mutagen): `--title/--album`, `--fields-json`, `--cover`, `--extract-cover` (exit code 2 = no embedded cover); always called with `--` before the file path |
-| `frontend/src` | React SPA: `api.js` (`apiFetch` — prefixes `/api`, sends the CSRF header + session cookie, `auth:unauthorized` event on `401`), pages (`Downloads`, `Library`, `Metadata`, `Jobs`, `Settings`, `Login`, `Register`, `Users`), `auth/AuthContext.js`, `components/ModalContext.js` |
+| `frontend/src` | React SPA: `api.js` (`apiFetch` — prefixes `/api`, sends the CSRF header + session cookie, `auth:unauthorized` event on `401`), pages (`Downloads`, `Library`, `Metadata`, `Jobs`, `Sync`/Conflicts, `Settings`, `Login`, `Register`, `Users`, `Setup`), `pages/metadata/` (grid, panels, history, lookup, version-conflict dialog, shortcut hooks), `auth/AuthContext.js`, `components/ModalContext.js` |
 
 ## Data model
 
@@ -170,6 +182,12 @@ erDiagram
     TEXT genre
     TEXT composer
     TEXT comment
+    INTEGER file_size "sync fingerprint"
+    INTEGER file_mtime "sync fingerprint"
+    TEXT tags_hash "sha256 of the normalized tags"
+    INTEGER version "optimistic lock, starts at 1"
+    DATETIME synced_at "last synchronization"
+    TEXT state "ok missing conflict"
   }
   jobs {
     TEXT id PK
@@ -213,11 +231,40 @@ erDiagram
     TEXT key PK
     TEXT value
   }
+  audit_log {
+    INTEGER id PK
+    DATETIME at
+    TEXT actor
+    TEXT action
+    TEXT target
+    TEXT detail
+  }
+  sync_conflicts {
+    TEXT id PK
+    TEXT track_id FK
+    TEXT field
+    TEXT db_value
+    TEXT file_value
+    TEXT source "scan apply concurrent"
+    DATETIME detected_at
+    TEXT status "open resolved dismissed"
+    TEXT resolved_by
+    DATETIME resolved_at
+    TEXT resolution
+  }
+  sync_trash {
+    TEXT id PK
+    TEXT original_path
+    TEXT trash_path
+    TEXT track_id FK
+    DATETIME created_at
+  }
 
-  artists   ||--o{ albums             : "artist_id"
-  albums    ||--o{ tracks              : "album_id"
-  tracks    ||--o{ metadata_changes    : "track_id"
-  users     ||--o{ sessions            : "user_id"
+  artists      ||--o{ albums          : "artist_id"
+  albums       ||--o{ tracks          : "album_id"
+  tracks       ||--o{ metadata_changes : "track_id, cascade"
+  tracks       ||--o{ sync_conflicts  : "track_id, cascade"
+  users        ||--o{ sessions        : "user_id"
 ```
 
 Notes from the migration code:
@@ -226,13 +273,21 @@ Notes from the migration code:
   `users(provider, subject)`.
 - Pragmas on every connection: `busy_timeout=5000`, `journal_mode=WAL`,
   `synchronous=NORMAL`, `foreign_keys=ON`, `wal_autocheckpoint=1000`.
-- Indexes: `idx_sessions_user`, `idx_metadata_changes_change_set`.
-- The `metadata_changes.track_id` foreign key has no `ON DELETE` clause while
-  `foreign_keys=ON`: deleting a track that has change history fails (logged in
-  `docs/plan/BUGS.md`, T12 queue).
-- `settings` holds the runtime `registration_mode` (`admin_only` | `open` | `approval`); the
-  environment variable `REGISTRATION_MODE` seeds it once, the database value wins afterwards
-  (`seedRegistrationMode`, `SetRegistrationMode`).
+- Indexes: `idx_sessions_user`, `idx_metadata_changes_change_set`,
+  `idx_sync_conflicts_track`, `idx_sync_conflicts_status`, `idx_sync_trash_created`.
+- `metadata_changes.track_id` and `sync_conflicts.track_id` cascade: deleting a track
+  removes its change history and open conflicts with it.
+- `tracks` carries the sync bookkeeping: the fingerprint columns (`file_size`,
+  `file_mtime`, `tags_hash`), the optimistic-lock `version`, the last `synced_at` and the
+  `state` (`ok` | `missing` | `conflict`).
+- `settings` holds the runtime `registration_mode` (`admin_only` | `open` | `approval`), the
+  `sync_conflict_policy` (`ask` | `file_wins` | `db_wins`) and the yt-dlp updater options
+  (`ytdlp_auto_update`, `ytdlp_update_interval_hours`, `ytdlp_channel`, plus the
+  `ytdlp_last_check`/`ytdlp_last_result`/`ytdlp_latest` bookkeeping); each environment
+  variable seeds its row once, the database value wins afterwards
+  (`seedRegistrationMode`, `SeedSyncPolicy`, `ytdlp.Manager.SetSettings`).
+- `audit_log` records the admin user-management actions (create/patch/reset-password/
+  delete) and the first-run setup completion.
 
 ## Job system
 
@@ -241,15 +296,22 @@ long-running operation becomes a row in `jobs` and a goroutine.
 
 | type | produced by | status flow | details |
 |---|---|---|---|
-| `download` | `POST /api/queue` | `queued` → `downloading` → `completed`/`failed` | the `download.Details` JSON |
+| `download` | `POST /api/queue` | `queued` → `downloading` → `completed`/`failed`; transient failures go back to `queued` with `next_retry_at` armed (automatic retry) | the `download.Details` JSON; `attempts` / `next_retry_at` carry the retry bookkeeping |
 | `scan` | `POST /api/library/scan` | `queued` → `running` → `completed`/`failed` | `{"path": …}`, progress `N tracks found` every 10 files |
-| `metadata` | bulk edits, revert, cover upload/from-url | `queued` → `running` → `completed`/`failed` | `action`: `apply_edits` (`change_set_id`, `edits`), `revert_change_set` (`reverts`), `embed_cover` (`album`, `cover`); progress `i/n` |
+| `metadata` | bulk edits, revert, cover upload/from-url, conflict resolution | `queued` → `running` → `completed`/`failed` | `action`: `apply_edits` (`change_set_id`, `edits`), `revert_change_set` (`reverts`), `embed_cover` (`album`, `cover`), `resolve_conflicts` (`change_set_id`, `resolutions`); progress `i/n` |
+| `ytdlp_update` | `POST /api/admin/ytdlp/update` and the auto-update loop | `queued` → `running` → `completed`/`failed` | `channel`, `reason` (`manual` or `auto`); the progress text carries the outcome ("updated to …" / "up to date: …") |
 
 Key properties from the code:
 
 - The dispatcher is a single goroutine consuming a buffered channel (5000); it gates
-  `activeDownloads` against the in-memory `concurrentLimit` (default 2, runtime-changeable
-  via `POST /api/config`) with a `sync.Cond`.
+  `activeDownloads` against the in-memory `concurrentLimit` (initial value from the
+  `CONCURRENT_DOWNLOAD` env var at startup — default 2, clamped 32 — runtime-changeable
+  via `POST /api/config`, admin only) with a `sync.Cond`.
+- Automatic retry: a transient yt-dlp failure (network markers, HTTP 5xx/429) with retry
+  budget left (`DOWNLOAD_MAX_RETRIES`, default 2, `0` disables) is re-queued with a
+  backoff of 30 s / 2 min / 10 min (capped); permanent failures (HTTP 403/404,
+  unavailable/private/members-only/copyright) are marked `failed` at once. The dispatcher
+  defers a re-queued job whose `next_retry_at` is still in the future.
 - Crash recovery: `NewDownloader` re-reads the table and re-queues every `download` job in
   `queued` or `downloading` state (`0%` progress) at startup.
 - Status writes never abort the pipeline; a failed `UpdateJobStatus` is only logged.
@@ -265,6 +327,7 @@ Key properties from the code:
 | `yt-dlp` | info fetch | `--dump-single-json --flat-playlist --playlist-end 200 -- <url>` (`infoArgs`; the URL is always after `--`) |
 | `yt-dlp` | download | fixed URL argument `https://youtube.com/watch?v=<id>` plus named options (`--extract-audio`, `--audio-format flac`, `--embed-thumbnail`, `--embed-metadata`, `--parse-metadata`, `--replace-in-metadata`, `--js-runtimes node`, `--output`, `--newline`, optional `--proxy`); no user value is ever an option |
 | `ffprobe` | scan | `ffprobe -v quiet -print_format json -show_format <file>` |
+| `ffmpeg` | scan (embedded cover fallback) | `ffmpeg -v error -i <file> -an -map 0:v:0 -frames:v 1 -c:v mjpeg -q:v 2 -f image2pipe -` (output capped at 10 MiB, must sniff as JPEG) |
 | `python3 update_metadata.py` | tag writes, rename, cover embed/extract | `python3 update_metadata.py …args… -- <path>` (argument vector, never a shell; exit 2 = no embedded cover) |
 | MusicBrainz web service | lookup | `GET <base>/release?...&fmt=json` with `User-Agent: JellyIDE/1.0 …` |
 
@@ -291,10 +354,10 @@ The production image installs `ffmpeg`, `python3`, `nodejs` and `pip3 install yt
   so one bad file does not abort a bulk apply. Trade-off: `python3` + `mutagen` are hard
   runtime dependencies and each write forks a process.
 - **Server-rendered SPA fallback instead of a separate web server.** One process, one port,
-  same-origin → no CORS and one cookie. The handler serves `index.html` for unknown paths,
-  refuses `..` traversal and keeps the static file server for the build output. Trade-off
-  (open item in `docs/plan/BUGS.md`): a missing file-extension asset also gets
-  `index.html` rather than `404`.
+  same-origin → no CORS and one cookie. The handler serves existing files as-is, serves
+  `index.html` for unknown extensionless paths (client-side routes), answers `404` for
+  missing assets with a file extension, and refuses `..` traversal and anything escaping
+  the build dir.
 - **Pending edits on the client, applied as one change set.** The metadata UI accumulates
   edits and reviews them before `PATCH /api/metadata/tracks`; the server validates the whole
   batch first (fail fast → `400` with `field`/`track_id`), then applies under one
@@ -303,11 +366,31 @@ The production image installs `ffmpeg`, `python3`, `nodejs` and `pip3 install yt
   (accepted parity gap, documented in `apply.go`; re-running or re-scanning repairs).
 - **Last-admin check invariant.** The server refuses to demote, disable or delete the last
   active admin (checked before the self-delete rule), so the instance can never become
-  unmanageable. The check is check-then-act, not transactional (logged in `BUGS.md`, T12).
+  unmanageable. The guard runs inside the write transaction
+  (`checkLastActiveAdminTx`), so two concurrent demotions cannot both pass it.
 - **Rate limiting where users (and servers) need it.** Per IP: 10 failed logins/registers per
-  15 minutes → `429` (in-memory, `RemoteAddr`-keyed — shared buckets behind a proxy are a
-  known limitation). Outbound to MusicBrainz: one shared token bucket (1 req/s) + 10-minute
-  cache to respect the public service.
+  15 minutes → `429` (in-memory, keyed by `RemoteAddr`, or by the first `X-Forwarded-For`
+  hop when `TRUST_PROXY=true` — only behind a proxy that overwrites the header); the
+  first-run setup endpoint runs a stricter limiter (5 failures per IP per 15 minutes).
+  Outbound to MusicBrainz: one shared token bucket (1 req/s) + 10-minute cache to respect
+  the public service.
+- **Managed yt-dlp binary with an allowlisted updater.** The downloader resolves the
+  binary path per job through `ytdlp.Manager`; when `YTDLP_MANAGED` is on (the default) the
+  server installs its own copy of the official zipapp on first start and auto-updates it
+  on a configurable interval, from a fixed https-only GitHub release allowlist with
+  checksum verification and an atomic swap that keeps the previous binary as rollback
+  candidate. A swap pauses new downloads and waits for running ones (10-minute bound), and
+  any failure leaves the previous binary in place — the updater can never break downloads.
+- **Explicit sync conflicts instead of silent divergence.** A scan that finds the file
+  differs from the database (and JellyIDE edited the row in the meantime) never guesses:
+  with the default `ask` policy it records one `sync_conflicts` row per differing field
+  and parks the track in `conflict` state until a user resolves, dismisses or lets the
+  `file_wins`/`db_wins` policy settle it. The editor side is guarded by the per-row
+  `version` optimistic lock, so concurrent editors produce recorded conflicts rather than
+  lost edits. Trade-off: under `ask` a diverged track is left exactly as it is on both
+  sides until someone resolves or dismisses the conflict (the grid marks it with a
+  conflict chip that links to the Conflicts page); `file_wins`/`db_wins` trade that
+  decision time for automatic settling.
 - **File naming scheme.** Downloads and renames build file names from the sanitized
   title (`/ \ : * ? " < > |` → `-`) plus the original extension; albums map to
   `<DOWNLOAD_DIR>/<artist>/<album>/` with the same sanitizer.

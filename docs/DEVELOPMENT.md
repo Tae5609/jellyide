@@ -64,11 +64,14 @@ server from the repository root.
    ADMIN_PASSWORD='change-me-123' DOWNLOAD_DIR="$HOME/Music" PORT=8080 go run .
    ```
 
-   - The first start with an empty database bootstraps the admin: `ADMIN_USERNAME` (default
-     `admin`) + `ADMIN_PASSWORD` (mandatory when `users` is empty — without it the server
-     exits with `set ADMIN_PASSWORD to bootstrap the admin account`).
-   - `DOWNLOAD_DIR` (default `/mnt/media/music`) holds the music tree **and** `jellyide.db`.
-   - Open `http://localhost:8080` and sign in.
+    - The first start with an empty database bootstraps the admin: with
+      `ADMIN_PASSWORD` set, the admin account is created from `ADMIN_USERNAME` (default
+      `admin`) + `ADMIN_PASSWORD`. With it unset, the server starts in first-run setup
+      mode instead — open `http://localhost:8080/setup` and use the one-time setup token
+      from the server log (see [DEPLOYMENT.md](DEPLOYMENT.md) and
+      [AUTHENTICATION.md](AUTHENTICATION.md)).
+    - `DOWNLOAD_DIR` (default `/mnt/media/music`) holds the music tree **and** `jellyide.db`.
+    - Open `http://localhost:8080` and sign in.
 
 3. Day-to-day frontend work with the CRA dev server:
 
@@ -86,8 +89,8 @@ server from the repository root.
    docker compose up -d --build
    ```
 
-   See [DEPLOYMENT.md](DEPLOYMENT.md) (deployment, the full env-var table, reverse-proxy and
-   the production compose file — being landed by the sibling docs PR).
+    See [DEPLOYMENT.md](DEPLOYMENT.md) (deployment, the full env-var table, reverse-proxy
+    and the production compose file).
 
 ## Makefile targets
 
@@ -95,11 +98,11 @@ From the repository root (`Makefile`):
 
 | Target | What it runs |
 |---|---|
-| `make fmt` | `gofmt -w .` (and `goimports -w -local yt-scraper .` when installed) in `backend/`, `ruff format backend`, `prettier --write` for the frontend when present |
-| `make lint` | version pin check, `golangci-lint run ./...` in `backend/`, `ruff check backend`, `npm run lint` when the script exists |
-| `make test` | `go test -race -cover ./...` in `backend/`, `npm test` when the script exists |
+| `make fmt` | `gofmt -w .` (and `goimports -w -local yt-scraper .` when installed) in `backend/`, `ruff format backend`, `npm run format` (Prettier, `--write`) in `frontend/` |
+| `make lint` | version pin check, `golangci-lint run ./...` in `backend/`, `ruff check backend`, `npm run lint && npm run format:check` (ESLint zero warnings + Prettier check) in `frontend/` |
+| `make test` | `go test -race -cover ./...` in `backend/`, `npm run test:ci` (Jest, `--watchAll=false --coverage`) in `frontend/` |
 | `make build` | `go build ./...`, `npm ci` if `node_modules` is missing, `npm run build` |
-| `make check` | `lint` → `test` → `build` |
+| `make check` | `lint` → `test` → `build`, then the auth smoke script (`bash -n scripts/smoke-auth.sh` + `./scripts/smoke-auth.sh`) |
 
 ## Quality gates
 
@@ -114,9 +117,11 @@ has merged, run whatever gates already exist"*). The same set runs in
 | Go lint | `golangci-lint run ./...` with `backend/.golangci.yml` | pinned 2.15.0 |
 | Go tests | `go test -race ./...` | CI adds `-coverprofile` and posts the total with `go tool cover -func` |
 | Python | `ruff check backend` and `ruff format --check` | pinned 0.17.6 |
-| Frontend build | `npm run build` (`CI=false` in CI so warnings do not break the build) | |
-| Frontend tests | `CI=true npm test -- --watchAll=false` | react-scripts/jest |
-| Frontend lint | `npm run lint` — zero warnings | **not present yet**: `frontend/package.json` has no `lint` script; the ESLint gate lands with T9 |
+| Frontend lint | `npm run lint` | ESLint over `src`, `--max-warnings=0` |
+| Frontend format | `npm run format:check` | Prettier over `src` |
+| Frontend tests | `npm run test:ci` | react-scripts/jest, `--watchAll=false --coverage` |
+| Frontend build | `npm run build` | `CI=true` in CI, so warnings fail the build (matching the lint gate) |
+| Auth smoke | `./scripts/smoke-auth.sh` | CI job `backend` (after the build), `make check` |
 | Docker | `docker build .` | CI job `docker` |
 
 New behaviour needs tests; a bug fix needs a test that fails before the fix. Bugs found out
@@ -125,14 +130,15 @@ of scope are appended to [docs/plan/BUGS.md](plan/BUGS.md), not fixed inline.
 ## Tests
 
 - **Backend** — `go test -race ./...` from `backend/`; every package has its `_test.go`
-  suite (`auth` covers login/register/admin/OIDC/SAML flows, `api` covers the handlers,
-  `db`, `jobs`, `download`, `library`, `metadata`, `musicbrainz`, `scanner`).
+  suite (`auth` covers login/register/admin/OIDC/SAML/setup flows, `api` covers the
+  handlers, `db`, `jobs`, `download`, `library`, `metadata`, `musicbrainz`, `scanner`,
+  `syncconf`, `ytdlp`, `fsutil`).
 - **Python helper** — `pytest backend/tests/test_update_metadata.py`.
-- **Frontend** — `npm test` (react-scripts/jest), watch-all disabled in CI:
-  `CI=true npm test -- --watchAll=false`; suites live next to the sources (`*.test.js`).
+- **Frontend** — `npm test` (react-scripts/jest), watch-all disabled in CI via
+  `npm run test:ci`; suites live next to the sources (`*.test.js`).
 - **Auth end-to-end smoke** — `scripts/smoke-auth.sh` boots the built server on port 18080
   with a temporary `DOWNLOAD_DIR` and asserts the auth surface (401/200/403/204 per check);
-  wired into CI and `make check` by the sibling ops PR ([DEPLOYMENT.md](DEPLOYMENT.md)).
+  wired into CI and `make check`.
 
 ## Project layout
 
@@ -166,7 +172,7 @@ of scope are appended to [docs/plan/BUGS.md](plan/BUGS.md), not fixed inline.
 │       ├── metadata/           # analyze, preview, apply, history, cover, lookup
 │       ├── musicbrainz/        # rate-limited MB client
 │       └── scanner/            # walk + ffprobe indexer
-├── frontend/                   # CRA (react-scripts), no lint script yet (T9)
+├── frontend/                   # CRA (react-scripts), ESLint + Prettier gates
 │   ├── package.json
 │   ├── public/
 │   └── src/
@@ -174,18 +180,19 @@ of scope are appended to [docs/plan/BUGS.md](plan/BUGS.md), not fixed inline.
 │       ├── App.js              # routes, page shell
 │       ├── auth/               # AuthContext, redirect helpers
 │       ├── components/         # ModalContext, UsersNavLink
-│       └── pages/              # Downloads, Library, Metadata, Jobs,
-│                               # Settings, Login, Register, Users
+│       └── pages/              # Downloads, Library, Metadata, Jobs, Sync
+│                               # (Conflicts), Settings, Login, Register,
+│                               # Users, Setup; metadata/ editor panels
 ├── docs/
 │   ├── ARCHITECTURE.md  API.md  METADATA.md  DEVELOPMENT.md
-│   ├── DEPLOYMENT.md · AUTHENTICATION.md · dev/keycloak/   (ops PR)
+│   ├── DEPLOYMENT.md · AUTHENTICATION.md · dev/keycloak/
 │   └── plan/                 # the workflow below
 │       ├── PLAN.md           # roadmap and target design
 │       ├── CONVENTIONS.md    # binding rules
 │       ├── STATUS.md         # wave board, decisions, ideas
 │       ├── BUGS.md           # deferred bug log
 │       ├── logs/jobs/        # agent job prompts, logs, reports (gitignored)
-│       └── tasks/            # T1…T12 task briefs
+│       └── tasks/            # T1…T19 task briefs
 └── scripts/agents/           # dispatch.sh, status.sh, wait.sh
 ```
 
@@ -198,12 +205,15 @@ lives in [DEPLOYMENT.md](DEPLOYMENT.md); the everyday set:
 `PORT` (8080) · `DOWNLOAD_DIR` (/mnt/media/music) · `AUTH_ENABLED` (true) ·
 `AUTH_LOCAL_ENABLED` (true) · `ADMIN_USERNAME` (admin) · `ADMIN_PASSWORD` (—) ·
 `REGISTRATION_MODE` (admin_only, seeds the database once) · `COOKIE_SECURE` (false) ·
-`PUBLIC_URL` (http://localhost:8080) · `OIDC_ENABLED`/`SAML_ENABLED` (false) and their
-`OIDC_*`/`SAML_*` families.
+`TRUST_PROXY` (false) · `PUBLIC_URL` (http://localhost:8080) · `CONCURRENT_DOWNLOAD`
+(2) · `DOWNLOAD_MAX_RETRIES` (2, `0` disables) · `YTDLP_MANAGED` (true) ·
+`SYNC_CONFLICT_POLICY` (ask, seeds the settings table once) ·
+`OIDC_ENABLED`/`SAML_ENABLED` (false) and their `OIDC_*`/`SAML_*` families.
 
-Note: `CONCURRENT_DOWNLOAD` appears in the `Dockerfile`/compose files but the server code
-never reads it — the concurrency limit starts at the hard-coded 2 and changes only through
-`POST /api/config`; see `docs/plan/BUGS.md`.
+Note: `CONCURRENT_DOWNLOAD` is read at startup by `download.NewDownloader` (a missing,
+invalid or below-1 value falls back to the default of 2, values above 32 are clamped to
+32); the limit can still be changed at runtime through `POST /api/config` (admin), which
+is not persisted across restarts.
 
 ## How the plan and agent workflow works
 
@@ -211,7 +221,7 @@ Development is driven by written briefs and carried out by opencode agents under
 orchestrator — humans review at the PR boundary.
 
 - `docs/plan/PLAN.md` — the roadmap: scope, target design, the ordered task list
-  (`T1` … `T12`).
+  (`T1` … `T19`).
 - `docs/plan/tasks/T<n>-<slug>.md` — one **brief** per task: branch name, files owned, do /
   do not, and the exact `Verify` commands. One brief = one PR.
 - `docs/plan/CONVENTIONS.md` — binding for every agent: Conventional Commits
