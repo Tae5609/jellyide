@@ -117,6 +117,56 @@ async function renderScanWatch({ finalArtist = 'New Artist' } = {}) {
   };
 }
 
+// Two scan jobs share a created_at timestamp (same-second starts). The
+// /jobs array order may differ between polls, and the settled decision
+// must not depend on it. The id tiebreak makes the running job
+// (id 'scan-tie-2') win the tie in both orders.
+async function renderTieScanWatch({ staleFirst = true } = {}) {
+  const tiedAt = '2026-11-22T00:00:00Z';
+  const staleJob = {
+    id: 'scan-tie-1',
+    type: 'scan',
+    status: 'completed',
+    details: '',
+    progress: '100%',
+    created_at: tiedAt,
+  };
+  let newJobStatus = 'running';
+  let artistFetchCount = 0;
+  const fetchImpl = jest.fn(async (url) => {
+    if (url === '/api/library/artists') {
+      artistFetchCount += 1;
+      const list =
+        artistFetchCount === 1 ? [] : [{ id: 'a1', name: 'Tie Artist' }];
+      return new Response(JSON.stringify(list), { status: 200 });
+    }
+    if (url === '/api/library/scan') {
+      return new Response(null, { status: 202 });
+    }
+    if (url === '/api/jobs') {
+      const newJob = {
+        id: 'scan-tie-2',
+        type: 'scan',
+        status: newJobStatus,
+        details: '',
+        progress: '50%',
+        created_at: tiedAt,
+      };
+      const jobs = staleFirst ? [staleJob, newJob] : [newJob, staleJob];
+      return new Response(JSON.stringify(jobs), { status: 200 });
+    }
+    return new Response('[]', { status: 200 });
+  });
+  const rendered = await renderLibrary(fetchImpl);
+  return {
+    ...rendered,
+    finishScan: (status) => {
+      newJobStatus = status;
+    },
+    artistFetchCount: () => artistFetchCount,
+  };
+}
+
 describe('Library artist refetch after scan', () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -166,6 +216,43 @@ describe('Library artist refetch after scan', () => {
     expect(container.textContent).toContain('Partial Artist');
     await unmount();
   });
+});
+
+describe('Library scan settled on tied created_at', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  for (const staleFirst of [true, false]) {
+    test(`settled decision is the same when the stale job is ${
+      staleFirst ? 'first' : 'last'
+    } in /jobs`, async () => {
+      jest.useFakeTimers();
+      const { container, unmount, finishScan, artistFetchCount } =
+        await renderTieScanWatch({ staleFirst });
+
+      await clickScan(container);
+      // Both jobs share a created_at. The tiebreak must pick the same
+      // job (the still-running one) in both array orders, so the watch
+      // must not settle early on the stale completed job.
+      expect(artistFetchCount()).toBe(1);
+
+      finishScan('completed');
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(artistFetchCount()).toBe(2);
+      expect(container.textContent).toContain('Tie Artist');
+
+      // The settled decision is stable: the watch stays stopped.
+      await act(async () => {
+        jest.advanceTimersByTime(4000);
+      });
+      expect(artistFetchCount()).toBe(2);
+      await unmount();
+    });
+  }
 });
 
 describe('Library scan feedback', () => {
