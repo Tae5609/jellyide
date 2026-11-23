@@ -28,7 +28,8 @@ music directory JellyIDE manages.
 - FLAC extraction with embedded thumbnail and metadata via `yt-dlp` (URLs are always passed
   after a `--` separator — no option injection).
 - Concurrent downloads with a runtime-adjustable limit, optional proxy for region-locked
-  content; unfinished jobs are re-queued after a crash.
+  content; unfinished jobs are re-queued after a crash, and transient failures retry
+  automatically with backoff (`DOWNLOAD_MAX_RETRIES`, `0` disables).
 - Finished files land in `<DOWNLOAD_DIR>/<artist>/<album>/<title>.<ext>` and are indexed
   automatically.
 
@@ -58,6 +59,10 @@ music directory JellyIDE manages.
   scores, apply the proposals as pending edits.
 - Full **history**: every applied change set is recorded and can be **reverted** (a revert
   is itself revertible — even file renames).
+- **Sync conflicts**: the scanner detects DB-vs-file tag divergences and records them as
+  per-field conflicts (policy: ask / file-wins / db-wins); the Conflicts page resolves
+  them (database / file / custom), relinks missing files and restores trashed ones, while
+  a per-row version lock keeps two editors from silently overwriting each other.
 - Keyboard shortcuts for everything (`Ctrl+S`, `Ctrl+Z`, `/`, `L`, `H`, `?`, `g d`, …).
 
 **Authentication & users**
@@ -68,10 +73,11 @@ music directory JellyIDE manages.
   admin user management (create, patch, disable, delete, password reset) with a
   last-active-admin invariant.
 - `HttpOnly; SameSite=Lax` session cookies (sha256-hashed tokens, 7-day sliding expiry),
-  CSRF header check, login rate limiting, and an admin bootstrap via `ADMIN_PASSWORD`.
+  CSRF header check plus the login-CSRF double-submit token, login rate limiting, and an
+  admin bootstrap via `ADMIN_PASSWORD` or the first-run setup wizard.
 
-**Jobs** — one dashboard for downloads, scans and metadata operations, with per-job type,
-status, progress and error.
+**Jobs** — one dashboard for downloads, scans, metadata and yt-dlp update operations, with
+per-job type, status, progress and error.
 
 **Mobile-friendly UI** — responsive down to 360 px: card list instead of the grid,
 bottom-sheet editors, sticky action bar.
@@ -126,7 +132,7 @@ docker exec -it jelly-ide ./server admin unlock                           # clea
 ```
 
 A password reset signs that user out everywhere. The last active admin cannot be demoted
-or disabled, and every action is written to the `audit_log` table.
+or disabled, and the admin user-management actions are written to the `audit_log` table.
 
 ## Documentation
 
