@@ -1,7 +1,9 @@
 package scanner
 
 import (
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -323,7 +325,7 @@ func TestDetectCover(t *testing.T) {
 	}
 
 	// No image at all: the cover stays empty.
-	s.detectCover(albumID, albumDir)
+	s.detectCover(albumID, albumDir, filepath.Join(albumDir, "missing.flac"))
 	album, err := lib.GetAlbum(albumID)
 	if err != nil {
 		t.Fatalf("GetAlbum: %v", err)
@@ -336,7 +338,7 @@ func TestDetectCover(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(albumDir, "cover.jpg"), []byte("img"), 0o600); err != nil {
 		t.Fatalf("write cover: %v", err)
 	}
-	s.detectCover(albumID, albumDir)
+	s.detectCover(albumID, albumDir, filepath.Join(albumDir, "missing.flac"))
 	album, err = lib.GetAlbum(albumID)
 	if err != nil {
 		t.Fatalf("GetAlbum: %v", err)
@@ -357,7 +359,7 @@ func TestDetectCover(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dirC, "photo.PNG"), []byte("img"), 0o600); err != nil {
 		t.Fatalf("write photo: %v", err)
 	}
-	s.detectCover(albumID2, dirC)
+	s.detectCover(albumID2, dirC, filepath.Join(dirC, "missing.flac"))
 	album, err = lib.GetAlbum(albumID2)
 	if err != nil {
 		t.Fatalf("GetAlbum: %v", err)
@@ -412,5 +414,107 @@ func TestScanSkipsJellyideDir(t *testing.T) {
 	}
 	if len(artists) != 0 {
 		t.Fatalf("artists = %+v, want none (.jellyide must be skipped)", artists)
+	}
+}
+
+// makeTrackWithArt builds a 1s MP3 with an embedded picture using the
+// real ffmpeg binary, or skips the test when ffmpeg is not installed.
+func makeTrackWithArt(t *testing.T, path string, withArt bool) {
+	t.Helper()
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	args := []string{"-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1"}
+	if withArt {
+		// A PNG cover (not JPEG) proves the extractor re-encodes to JPEG.
+		args = append(args, "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1",
+			"-map", "0:a", "-map", "1:v", "-c:v", "png", "-frames:v", "1",
+			"-disposition:v", "attached_pic", "-id3v2_version", "3")
+	}
+	args = append(args, path)
+	if out, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil { //nolint:gosec // G204 - test fixture generation with fixed args
+		t.Fatalf("ffmpeg fixture: %v: %s", err, out)
+	}
+}
+
+// TestDetectCoverFromEmbeddedArt is the regression test for downloads
+// showing "No cover yet": yt-dlp embeds the thumbnail in the audio file and
+// writes no image next to it, so the cover must come from the track.
+func TestDetectCoverFromEmbeddedArt(t *testing.T) {
+	s, _, lib, dir := newTestScanner(t)
+	artistID, err := lib.EnsureArtist("Artist")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := lib.EnsureAlbum(artistID, "Album")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	albumDir := filepath.Join(dir, "Artist", "Album")
+	if err := os.MkdirAll(albumDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	track := filepath.Join(albumDir, "song.mp3")
+	makeTrackWithArt(t, track, true)
+
+	s.detectCover(albumID, albumDir, track)
+
+	album, err := lib.GetAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if album.CoverArt != "/media/Artist/Album/cover.jpg" {
+		t.Fatalf("cover = %q, want /media/Artist/Album/cover.jpg", album.CoverArt)
+	}
+	data, err := os.ReadFile(filepath.Join(albumDir, "cover.jpg")) //nolint:gosec // G304 - test temp dir
+	if err != nil {
+		t.Fatalf("cover.jpg not written: %v", err)
+	}
+	if ct := http.DetectContentType(data); ct != "image/jpeg" {
+		t.Fatalf("cover content type = %s, want image/jpeg", ct)
+	}
+}
+
+// TestDetectCoverNoEmbeddedArtTriedOnce checks that a track without art
+// leaves the cover empty and that ffmpeg is only attempted once per album.
+func TestDetectCoverNoEmbeddedArtTriedOnce(t *testing.T) {
+	s, _, lib, dir := newTestScanner(t)
+	artistID, err := lib.EnsureArtist("Artist")
+	if err != nil {
+		t.Fatalf("EnsureArtist: %v", err)
+	}
+	albumID, err := lib.EnsureAlbum(artistID, "Plain")
+	if err != nil {
+		t.Fatalf("EnsureAlbum: %v", err)
+	}
+	albumDir := filepath.Join(dir, "Artist", "Plain")
+	if err := os.MkdirAll(albumDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	track := filepath.Join(albumDir, "song.mp3")
+	makeTrackWithArt(t, track, false)
+
+	s.detectCover(albumID, albumDir, track)
+	album, err := lib.GetAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if album.CoverArt != "" {
+		t.Fatalf("cover = %q, want empty", album.CoverArt)
+	}
+	if !s.coverTried[albumID] {
+		t.Fatalf("album not recorded as tried")
+	}
+
+	// Once tried, a track that now has art is not re-extracted in the
+	// same scanner lifetime (bounded ffmpeg cost per scan).
+	makeTrackWithArt(t, track, true)
+	s.detectCover(albumID, albumDir, track)
+	album, err = lib.GetAlbum(albumID)
+	if err != nil {
+		t.Fatalf("GetAlbum: %v", err)
+	}
+	if album.CoverArt != "" {
+		t.Fatalf("cover = %q, want empty (already tried)", album.CoverArt)
 	}
 }

@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -36,6 +38,10 @@ type Scanner struct {
 	lib        *library.Service
 	jobManager *jobs.Manager
 	basePath   string
+	// coverTried records albums whose embedded cover extraction was
+	// already attempted, so ffmpeg runs at most once per album.
+	coverMu    sync.Mutex
+	coverTried map[string]bool
 	// Tags rewrites file tags from the DB under the db_wins policy.
 	// Nil disables db_wins (the track is left untouched and logged).
 	Tags TagWriter
@@ -316,7 +322,7 @@ func (s *Scanner) syncTrack(path string, info probeInfo, changeSetID string) {
 		return
 	}
 
-	s.detectCover(albumID, filepath.Dir(path))
+	s.detectCover(albumID, filepath.Dir(path), path)
 
 	track, err := s.lib.GetTrackByPath(path)
 	switch {
@@ -520,7 +526,20 @@ func ptrIfNotZero(n int) *int {
 	return &n
 }
 
-func (s *Scanner) detectCover(albumID string, dir string) {
+// detectCover sets the album cover from an image file in the album
+// directory, or, when there is none and the album has no cover yet, from
+// the artwork embedded in trackPath (yt-dlp downloads embed the thumbnail
+// in the audio file and write no image next to it).
+func (s *Scanner) detectCover(albumID string, dir string, trackPath string) {
+	if s.coverFromImageFile(albumID, dir) {
+		return
+	}
+	s.coverFromEmbedded(albumID, trackPath)
+}
+
+// coverFromImageFile looks for a cover image next to the tracks and
+// reports whether one was found.
+func (s *Scanner) coverFromImageFile(albumID string, dir string) bool {
 	coverNames := []string{"cover.jpg", "cover.png", "folder.jpg", "front.jpg", "album.jpg"}
 
 	for _, name := range coverNames {
@@ -530,7 +549,7 @@ func (s *Scanner) detectCover(albumID string, dir string) {
 			if err := s.lib.SetAlbumCover(albumID, "/media/"+filepath.ToSlash(rel)); err != nil {
 				log.Printf("scanner: set cover for album %s: %v", albumID, err)
 			}
-			return
+			return true
 		}
 	}
 
@@ -545,9 +564,60 @@ func (s *Scanner) detectCover(albumID string, dir string) {
 					if err := s.lib.SetAlbumCover(albumID, "/media/"+filepath.ToSlash(rel)); err != nil {
 						log.Printf("scanner: set cover for album %s: %v", albumID, err)
 					}
-					return
+					return true
 				}
 			}
 		}
 	}
+	return false
+}
+
+// maxEmbeddedCoverBytes caps the extracted image size (same limit as uploads).
+const maxEmbeddedCoverBytes = 10 << 20
+
+// coverFromEmbedded extracts the embedded artwork of trackPath with ffmpeg,
+// re-encoded to JPEG (YouTube thumbnails are often WebP), and saves it as
+// the album cover. It only runs when the album has no cover yet, and tries
+// each album at most once per scanner lifetime so albums without embedded
+// art do not spawn ffmpeg for every track on every scan.
+func (s *Scanner) coverFromEmbedded(albumID string, trackPath string) {
+	album, err := s.lib.GetAlbum(albumID)
+	if err != nil || album.CoverArt != "" {
+		return
+	}
+	s.coverMu.Lock()
+	if s.coverTried == nil {
+		s.coverTried = make(map[string]bool)
+	}
+	if s.coverTried[albumID] {
+		s.coverMu.Unlock()
+		return
+	}
+	s.coverTried[albumID] = true
+	s.coverMu.Unlock()
+
+	data, err := extractEmbeddedCover(trackPath)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	if _, err := s.lib.SaveCoverArt(album, data, "jpg"); err != nil {
+		log.Printf("scanner: save embedded cover for album %s: %v", albumID, err)
+	}
+}
+
+// extractEmbeddedCover returns the first embedded picture of path as JPEG
+// bytes, or nil when the file has none.
+func extractEmbeddedCover(path string) ([]byte, error) {
+	//nolint:gosec // G204 - ffmpeg is a fixed binary; path comes from the walk under basePath (passed as the -i option value)
+	cmd := exec.Command("ffmpeg", "-v", "error", "-i", path,
+		"-an", "-map", "0:v:0", "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "2",
+		"-f", "image2pipe", "-")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > maxEmbeddedCoverBytes || http.DetectContentType(out) != "image/jpeg" {
+		return nil, fmt.Errorf("unexpected embedded cover output (%d bytes)", len(out))
+	}
+	return out, nil
 }
