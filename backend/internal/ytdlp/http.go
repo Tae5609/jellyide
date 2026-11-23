@@ -15,19 +15,16 @@ import (
 var (
 	allowedRedirectHosts = map[string]bool{
 		"github.com":                           true,
+		"api.github.com":                       true,
 		"objects.githubusercontent.com":        true,
 		"release-assets.githubusercontent.com": true,
 	}
-	allowedRedirectDomain = ".github.com" // covers api.github.com
 )
 
 // isAllowedHost reports whether host is part of the fixed release
-// allowlist.
+// allowlist (exact match; no wildcard subdomains).
 func isAllowedHost(host string) bool {
 	host = strings.ToLower(host)
-	if host == "github.com" || strings.HasSuffix(host, allowedRedirectDomain) {
-		return true
-	}
 	return allowedRedirectHosts[host]
 }
 

@@ -13,7 +13,7 @@ func TestIsAllowedHost(t *testing.T) {
 	}{
 		{"github.com", true},
 		{"api.github.com", true}, // subdomain of the release API
-		{"codeload.github.com", true},
+		{"codeload.github.com", false},
 		{"objects.githubusercontent.com", true},
 		{"release-assets.githubusercontent.com", true},
 		{"GITHUB.COM", true}, // case-insensitive
