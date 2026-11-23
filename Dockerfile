@@ -8,8 +8,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o server .
 
 FROM node:20-alpine AS frontend
 WORKDIR /app
-COPY frontend/package.json .
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend/ .
 RUN npm run build
 
