@@ -55,5 +55,7 @@ build:
 	@test -d frontend/node_modules || cd frontend && npm ci
 	cd frontend && npm run build
 
-## check: lint, test and build
+## check: lint, test, build and the auth smoke script
 check: lint test build
+	bash -n scripts/smoke-auth.sh
+	./scripts/smoke-auth.sh

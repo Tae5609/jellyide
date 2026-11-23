@@ -1,0 +1,20 @@
+# Local Keycloak for trying out JellyIDE's OIDC and SAML login.
+#
+#   docker compose up -d
+#   # wait until "started" appears in `docker compose logs -f`,
+#   # then open the console: http://localhost:8081 (admin / admin)
+#
+# Then follow README.md to create the realm, the OIDC client and the
+# SAML client, and point JellyIDE at it via the matching .env lines.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    # start-dev: development mode (in-memory DB, no prod warnings). Do
+    # not use this mode on a machine reachable from the internet.
+    command: ["start-dev"]
+    ports:
+      - "8081:8080"
+    environment:
+      # Dev console login.
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
