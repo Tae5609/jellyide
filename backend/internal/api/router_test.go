@@ -24,6 +24,7 @@ import (
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/musicbrainz"
 	"yt-scraper/internal/scanner"
+	"yt-scraper/internal/ytdlp"
 )
 
 // noOpTagWriter implements metadata.TagWriter without touching Python or
@@ -34,17 +35,30 @@ func (noOpTagWriter) WriteFields(string, map[string]interface{}) error { return 
 func (noOpTagWriter) EmbedCover(string, string) error                  { return nil }
 func (noOpTagWriter) ExtractCover(string, string) (bool, error)        { return false, nil }
 
+// passAdmin is the test requireAdmin: every request counts as an admin.
+func passAdmin(next http.Handler) http.Handler { return next }
+
 // newTestRouter wires the API the same way main.go does, backed by a
 // temp-dir SQLite database and an empty music dir. It returns the handler,
 // the downloader, the library service, the job manager and the temp music
 // dir for seeding and assertions.
 func newTestRouter(t *testing.T) (http.Handler, *download.Downloader, *library.Service, *jobs.Manager, string) {
-	return newTestRouterWithMB(t, nil)
+	t.Helper()
+	h, dl, lib, jm, _, dir := newTestRouterFull(t, nil, passAdmin)
+	return h, dl, lib, jm, dir
 }
 
 // newTestRouterWithMB is newTestRouter with an optional MusicBrainz
 // client override (pointing at an httptest server in tests).
 func newTestRouterWithMB(t *testing.T, mb *musicbrainz.Client) (http.Handler, *download.Downloader, *library.Service, *jobs.Manager, string) {
+	t.Helper()
+	h, dl, lib, jm, _, dir := newTestRouterFull(t, mb, passAdmin)
+	return h, dl, lib, jm, dir
+}
+
+// newTestRouterFull wires the API with a real ytdlp manager (bin dir in
+// the temp music dir) and a caller-supplied requireAdmin guard.
+func newTestRouterFull(t *testing.T, mb *musicbrainz.Client, requireAdmin func(http.Handler) http.Handler) (http.Handler, *download.Downloader, *library.Service, *jobs.Manager, *ytdlp.Manager, string) {
 	t.Helper()
 	dir := t.TempDir()
 	database, err := db.NewDB(filepath.Join(dir, "test.db"))
@@ -57,6 +71,9 @@ func newTestRouterWithMB(t *testing.T, mb *musicbrainz.Client) (http.Handler, *d
 	jobManager := jobs.NewManager(database)
 	musicScanner := scanner.NewScanner(libService, jobManager, dir)
 	downloader := download.NewDownloader(jobManager, musicScanner, dir)
+	yt := ytdlp.NewManager(database, jobManager, filepath.Join(dir, ".jellyide", "bin"), true)
+	downloader.SetYtDlpResolver(yt)
+	yt.SetGate(downloader)
 	deps := metadata.Deps{
 		DB:      database,
 		Library: libService,
@@ -70,8 +87,8 @@ func newTestRouterWithMB(t *testing.T, mb *musicbrainz.Client) (http.Handler, *d
 
 	r := mux.NewRouter()
 	apiSub := r.PathPrefix("/api").Subrouter()
-	RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner)
-	return r, downloader, libService, jobManager, dir
+	RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, yt, requireAdmin)
+	return r, downloader, libService, jobManager, yt, dir
 }
 
 // seedTrack creates artist, album and one track row (plus the on-disk dir)

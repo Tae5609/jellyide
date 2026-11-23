@@ -76,6 +76,7 @@ export default function Settings() {
               setLimit(e.target.value);
               setLimitError('');
             }} 
+            disabled={!isAdmin}
           />
           {limitError && (
             <p className="settings-msg error">
@@ -97,16 +98,25 @@ export default function Settings() {
             placeholder="http://user:pass@host:port"
             value={proxy} 
             onChange={e => setProxy(e.target.value)} 
+            disabled={!isAdmin}
           />
           <p className="settings-hint">
             Useful for bypassing regional YouTube blocks.
           </p>
         </div>
 
-        <button className="btn-primary settings-save" onClick={save} disabled={saving}>
-          {saving ? "Saving..." : "Save Configuration"}
-        </button>
+        {isAdmin ? (
+          <button className="btn-primary settings-save" onClick={save} disabled={saving}>
+            {saving ? "Saving..." : "Save Configuration"}
+          </button>
+        ) : (
+          <p className="settings-hint" style={{ marginTop: '12px' }}>
+            Only administrators can modify download concurrency and proxy settings.
+          </p>
+        )}
       </div>
+
+      {isAdmin && <YtDlpCard />}
 
       {isAdmin && <RegistrationCard />}
 
@@ -313,6 +323,316 @@ function ChangePasswordCard() {
           {saving ? "Saving..." : "Change Password"}
         </button>
       </form>
+    </div>
+  );
+}
+
+const YTDLP_INTERVAL_OPTIONS = [
+  { value: 6, label: '6 hours' },
+  { value: 12, label: '12 hours' },
+  { value: 24, label: '24 hours (1 day)' },
+  { value: 72, label: '3 days' },
+  { value: 168, label: '7 days (1 week)' },
+];
+
+function YtDlpCard() {
+  const { showAlert, showConfirm } = useModal();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [force, setForce] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const [autoUpdate, setAutoUpdate] = useState(true);
+  const [intervalHours, setIntervalHours] = useState(24);
+  const [channel, setChannel] = useState('stable');
+
+  const loadStatus = async () => {
+    try {
+      const res = await apiFetch('/admin/ytdlp');
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        setAutoUpdate(json.auto_update ?? true);
+        setIntervalHours(json.interval_hours ?? 24);
+        setChannel(json.channel || 'stable');
+        if (json.updating) {
+          setUpdating(true);
+        } else {
+          setUpdating(false);
+        }
+      }
+    } catch (err) {
+      // quiet load error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  useEffect(() => {
+    if (!updating) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiFetch('/admin/ytdlp');
+        if (res.ok) {
+          const json = await res.json();
+          setData(json);
+          if (!json.updating) {
+            setUpdating(false);
+            setMsg({ type: 'success', text: 'yt-dlp update finished.' });
+          }
+        }
+      } catch (e) {
+        // ignore polling error
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [updating]);
+
+  const handleCheck = async () => {
+    setChecking(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch('/admin/ytdlp/check', { method: 'POST' });
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        if (json.update_available) {
+          setMsg({ type: 'success', text: `Update available: ${json.latest_version}` });
+        } else {
+          setMsg({ type: 'success', text: 'yt-dlp is up to date.' });
+        }
+      } else {
+        let text = 'Failed to check for updates.';
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) text = errData.error;
+        } catch (_) {}
+        setMsg({ type: 'error', text });
+      }
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    }
+    setChecking(false);
+  };
+
+  const handleUpdate = async () => {
+    setUpdating(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch('/admin/ytdlp/update', {
+        method: 'POST',
+        body: JSON.stringify({ force })
+      });
+      if (res.ok || res.status === 202) {
+        setMsg({ type: 'success', text: 'Update job started...' });
+        loadStatus();
+      } else if (res.status === 409) {
+        let text = 'Already up to date or update in progress.';
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) text = errData.error;
+        } catch (_) {}
+        setMsg({ type: 'error', text });
+        setUpdating(false);
+      } else {
+        let text = 'Failed to start update.';
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) text = errData.error;
+        } catch (_) {}
+        setMsg({ type: 'error', text });
+        setUpdating(false);
+      }
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+      setUpdating(false);
+    }
+  };
+
+  const handleRollback = async () => {
+    const confirmed = await showConfirm(
+      'Roll back yt-dlp?',
+      'Do you want to restore the previous yt-dlp binary? This will undo the latest update.'
+    );
+    if (!confirmed) return;
+
+    setRollingBack(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch('/admin/ytdlp/rollback', { method: 'POST' });
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        showAlert('Rollback Successful', 'yt-dlp restored to the previous binary.');
+      } else {
+        let text = 'Failed to roll back.';
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) text = errData.error;
+        } catch (_) {}
+        showAlert('Rollback Failed', text);
+      }
+    } catch (err) {
+      showAlert('Rollback Error', err.message);
+    }
+    setRollingBack(false);
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch('/admin/ytdlp/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          auto_update: autoUpdate,
+          interval_hours: Number(intervalHours),
+          channel
+        })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        setMsg({ type: 'success', text: 'yt-dlp settings saved.' });
+      } else {
+        let text = 'Failed to save settings.';
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) text = errData.error;
+        } catch (_) {}
+        setMsg({ type: 'error', text });
+      }
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    }
+    setSavingSettings(false);
+  };
+
+  if (loading && !data) {
+    return (
+      <div className="card settings-card">
+        <h3 className="settings-card-title">yt-dlp</h3>
+        <p className="settings-hint">Loading yt-dlp status...</p>
+      </div>
+    );
+  }
+
+  const isUpToDate = data && !data.update_available;
+  const updateDisabled = updating || (!force && isUpToDate);
+
+  return (
+    <div className="card settings-card" data-testid="ytdlp-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 className="settings-card-title" style={{ margin: 0 }}>yt-dlp Version</h3>
+        {data && data.update_available && (
+          <span className="badge running" style={{ fontWeight: 600 }}>Update available</span>
+        )}
+      </div>
+
+      {msg && <p className={`settings-msg ${msg.type}`}>{msg.text}</p>}
+
+      {data && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px', background: 'var(--bg-main)', padding: '12px', borderRadius: '8px' }}>
+          <div>
+            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>Installed Version</div>
+            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{data.version || 'None'}</div>
+            <div className="settings-hint" style={{ fontSize: '12px' }}>{data.managed ? 'Managed' : 'System'} ({data.path})</div>
+          </div>
+          <div>
+            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>Latest Version</div>
+            <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{data.latest_version || 'Unknown'}</div>
+            <div className="settings-hint" style={{ fontSize: '12px' }}>Channel: {data.channel}</div>
+          </div>
+          <div>
+            <div className="settings-hint" style={{ fontSize: '11px', textTransform: 'uppercase' }}>Last Check</div>
+            <div style={{ fontSize: '13px' }}>{data.last_check ? new Date(data.last_check).toLocaleString() : 'Never'}</div>
+            {data.last_result && <div className="settings-hint" style={{ fontSize: '12px' }}>{data.last_result}</div>}
+          </div>
+        </div>
+      )}
+
+      {/* Buttons */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginBottom: '20px' }}>
+        <button className="btn-secondary" onClick={handleCheck} disabled={checking || updating}>
+          {checking ? 'Checking...' : 'Check for updates'}
+        </button>
+
+        <button className="btn-primary" onClick={handleUpdate} disabled={updateDisabled}>
+          {updating ? 'Updating...' : 'Update now'}
+        </button>
+
+        <button className="btn-secondary" onClick={handleRollback} disabled={!data || !data.has_rollback || rollingBack || updating}>
+          {rollingBack ? 'Rolling back...' : 'Roll back'}
+        </button>
+
+        <label className="settings-checkbox-label" style={{ marginLeft: '6px' }}>
+          <input
+            type="checkbox"
+            checked={force}
+            onChange={e => setForce(e.target.checked)}
+          />
+          <span style={{ fontSize: '13px' }}>Force reinstall</span>
+        </label>
+      </div>
+
+      {/* Auto update options */}
+      <h4 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>Auto-update</h4>
+      <div className="settings-field">
+        <label className="settings-checkbox-label" style={{ marginBottom: '12px' }}>
+          <input
+            type="checkbox"
+            checked={autoUpdate}
+            onChange={e => setAutoUpdate(e.target.checked)}
+          />
+          <span>Enable auto-update</span>
+        </label>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+        <div className="settings-field">
+          <label className="settings-label">Update Interval</label>
+          <select
+            className="settings-input"
+            value={intervalHours}
+            onChange={e => setIntervalHours(Number(e.target.value))}
+            disabled={!autoUpdate}
+          >
+            {YTDLP_INTERVAL_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label">Channel</label>
+          <select
+            className="settings-input"
+            value={channel}
+            onChange={e => setChannel(e.target.value)}
+          >
+            <option value="stable">stable</option>
+            <option value="nightly">nightly</option>
+          </select>
+        </div>
+      </div>
+
+      {channel === 'nightly' && (
+        <p className="settings-msg error" style={{ marginBottom: '16px', background: 'rgba(234, 179, 8, 0.1)', color: '#facc15', borderColor: 'rgba(234, 179, 8, 0.3)' }}>
+          Warning: Nightly builds receive daily fixes but may be unstable.
+        </p>
+      )}
+
+      <button className="btn-primary settings-save" onClick={handleSaveSettings} disabled={savingSettings}>
+        {savingSettings ? 'Saving...' : 'Save Settings'}
+      </button>
     </div>
   );
 }

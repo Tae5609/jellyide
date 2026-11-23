@@ -28,9 +28,10 @@ const (
 	StatusCompleted   JobStatus = "completed"
 	StatusFailed      JobStatus = "failed"
 
-	TypeDownload JobType = "download"
-	TypeScan     JobType = "scan"
-	TypeMetadata JobType = "metadata"
+	TypeDownload    JobType = "download"
+	TypeScan        JobType = "scan"
+	TypeMetadata    JobType = "metadata"
+	TypeYTDLPUpdate JobType = "ytdlp_update"
 )
 
 // NullTime is a database-nullable time.Time. It marshals to an RFC 3339

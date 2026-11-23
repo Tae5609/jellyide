@@ -14,6 +14,9 @@ COPY frontend/ .
 RUN npm run build
 
 FROM alpine:latest
+# The pip yt-dlp stays as the system fallback: with YTDLP_MANAGED on (the
+# default) JellyIDE installs and auto-updates its own yt-dlp zipapp under
+# <DOWNLOAD_DIR>/.jellyide/bin, running it with python3 from this line.
 RUN apk add --no-cache ffmpeg python3 py3-pip nodejs npm     && pip3 install yt-dlp mutagen --break-system-packages
 WORKDIR /app
 COPY --from=backend /app/server .

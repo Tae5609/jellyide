@@ -36,7 +36,7 @@ func newTestDownloader(t *testing.T) (*Downloader, *jobs.Manager, *db.DB, string
 		downloadDir:     dir,
 		queue:           make(chan string, 5000),
 		concurrentLimit: 2,
-		ytDlpPath:       "yt-dlp-fake",
+		resolver:        fixedPath("yt-dlp-fake"),
 		// maxRetries stays 0 (automatic retry disabled) unless a test
 		// opts in; now is the real clock unless a test injects one.
 		now: time.Now,
@@ -190,7 +190,7 @@ func TestSanitize(t *testing.T) {
 
 func TestProcessDownloadSuccess(t *testing.T) {
 	d, jm, _, dir := newTestDownloader(t)
-	d.ytDlpPath = writeFakeYtDlp(t, dir, "yt-dlp-fake", "success")
+	d.resolver = fixedPath(writeFakeYtDlp(t, dir, "yt-dlp-fake", "success"))
 
 	job, err := jm.CreateJob(jobs.TypeDownload, Details{
 		VideoID: "dQw4w9WgXcQ",
@@ -222,7 +222,7 @@ func TestProcessDownloadSuccess(t *testing.T) {
 
 func TestProcessDownloadFailure(t *testing.T) {
 	d, jm, _, dir := newTestDownloader(t)
-	d.ytDlpPath = writeFakeYtDlp(t, dir, "yt-dlp-fake", "failure")
+	d.resolver = fixedPath(writeFakeYtDlp(t, dir, "yt-dlp-fake", "failure"))
 
 	job, err := jm.CreateJob(jobs.TypeDownload, Details{
 		VideoID: "dQw4w9WgXcQ",
@@ -438,7 +438,7 @@ func TestAutoRetryBackoffSchedule(t *testing.T) {
 	d.maxRetries = 2
 	base := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 	d.now = func() time.Time { return base }
-	d.ytDlpPath = writeFailingYtDlp(t, dir, "yt-dlp-fake", "HTTP Error 503: Service Unavailable")
+	d.resolver = fixedPath(writeFailingYtDlp(t, dir, "yt-dlp-fake", "HTTP Error 503: Service Unavailable"))
 
 	job, err := jm.CreateJob(jobs.TypeDownload, Details{
 		VideoID: "dQw4w9WgXcQ", Title: "Cool Song", Artist: "Artist", Album: "Album",
@@ -509,7 +509,7 @@ func TestAutoRetryBackoffSchedule(t *testing.T) {
 func TestAutoRetryDisabledWhenMaxIsZero(t *testing.T) {
 	d, jm, _, dir := newTestDownloader(t)
 	d.maxRetries = 0 // 0 disables automatic retry
-	d.ytDlpPath = writeFailingYtDlp(t, dir, "yt-dlp-fake", "timed out")
+	d.resolver = fixedPath(writeFailingYtDlp(t, dir, "yt-dlp-fake", "timed out"))
 
 	job, err := jm.CreateJob(jobs.TypeDownload, Details{VideoID: "x", Title: "T", Artist: "A", Album: "B"})
 	if err != nil {
@@ -536,7 +536,7 @@ func TestAutoRetryDisabledWhenMaxIsZero(t *testing.T) {
 func TestAutoRetryPermanentFailureFailsImmediately(t *testing.T) {
 	d, jm, _, dir := newTestDownloader(t)
 	d.maxRetries = 2
-	d.ytDlpPath = writeFailingYtDlp(t, dir, "yt-dlp-fake", "ERROR: [youtube] x: Video unavailable")
+	d.resolver = fixedPath(writeFailingYtDlp(t, dir, "yt-dlp-fake", "ERROR: [youtube] x: Video unavailable"))
 
 	job, err := jm.CreateJob(jobs.TypeDownload, Details{VideoID: "x", Title: "T", Artist: "A", Album: "B"})
 	if err != nil {
@@ -647,7 +647,7 @@ func TestConcurrentRetriesEnqueueOnce(t *testing.T) {
 func TestDispatcherSkipsFutureNextRetryAt(t *testing.T) {
 	d, jm, _, dir := newTestDownloader(t)
 	marker := filepath.Join(dir, "yt-dlp-ran")
-	d.ytDlpPath = writeMarkerYtDlp(t, dir, "yt-dlp-marker", marker)
+	d.resolver = fixedPath(writeMarkerYtDlp(t, dir, "yt-dlp-marker", marker))
 
 	job, err := jm.CreateJob(jobs.TypeDownload, Details{VideoID: "x", Title: "T", Artist: "A", Album: "B"})
 	if err != nil {
@@ -844,4 +844,117 @@ func TestNewDownloaderConcurrentDownloadEnvClamped(t *testing.T) {
 	if got := d.GetLimit(); got != 32 {
 		t.Fatalf("limit = %d, want clamped to 32", got)
 	}
+}
+
+func TestResolverDefaultsAndSwap(t *testing.T) {
+	d, _, _, _ := newTestDownloader(t)
+	if got := d.YtDlpPath(); got != "yt-dlp-fake" {
+		t.Fatalf("initial path = %q, want yt-dlp-fake", got)
+	}
+	d.SetYtDlpResolver(fixedPath("/mnt/media/music/.jellyide/bin/yt-dlp"))
+	if got := d.YtDlpPath(); got != "/mnt/media/music/.jellyide/bin/yt-dlp" {
+		t.Fatalf("path after swap = %q, want the managed path", got)
+	}
+}
+
+func TestWaitForIdleReturnsImmediatelyWhenIdle(t *testing.T) {
+	d, _, _, _ := newTestDownloader(t)
+	if err := d.WaitForIdle(time.Second); err != nil {
+		t.Fatalf("WaitForIdle while idle = %v, want nil", err)
+	}
+}
+
+func TestWaitForIdleWaitsForRunningDownloads(t *testing.T) {
+	d, _, _, _ := newTestDownloader(t)
+
+	// Fake downloader state: one "download" running, released shortly.
+	d.mu.Lock()
+	d.activeDownloads = 1
+	d.mu.Unlock()
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		d.mu.Lock()
+		d.activeDownloads--
+		d.cond.Broadcast()
+		d.mu.Unlock()
+	}()
+
+	if err := d.WaitForIdle(2 * time.Second); err != nil {
+		t.Fatalf("WaitForIdle after release = %v, want nil", err)
+	}
+}
+
+func TestWaitForIdleTimesOutWhileBusy(t *testing.T) {
+	d, _, _, _ := newTestDownloader(t)
+
+	d.mu.Lock()
+	d.activeDownloads = 1
+	d.mu.Unlock()
+
+	err := d.WaitForIdle(1200 * time.Millisecond)
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("WaitForIdle while busy = %v, want ErrBusy", err)
+	}
+}
+
+// releaseSlot drops one active download and wakes waiters.
+func releaseSlot(d *Downloader) {
+	d.mu.Lock()
+	d.activeDownloads--
+	d.cond.Broadcast()
+	d.mu.Unlock()
+}
+
+func TestWaitForSlotBlocksWhilePaused(t *testing.T) {
+	d, _, _, _ := newTestDownloader(t)
+
+	d.Pause()
+	released := make(chan struct{})
+	go func() {
+		d.waitForSlot()
+		close(released)
+	}()
+	select {
+	case <-released:
+		t.Fatal("waitForSlot returned while paused")
+	case <-time.After(100 * time.Millisecond):
+	}
+	d.Resume()
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitForSlot did not unblock after Resume")
+	}
+	if got := d.ActiveDownloads(); got != 1 {
+		t.Fatalf("active downloads = %d, want 1", got)
+	}
+	releaseSlot(d)
+}
+
+func TestWaitForSlotBlocksAtLimit(t *testing.T) {
+	d, _, _, _ := newTestDownloader(t)
+	d.SetLimit(1)
+
+	d.mu.Lock()
+	d.activeDownloads = 1
+	d.mu.Unlock()
+
+	released := make(chan struct{})
+	go func() {
+		d.waitForSlot()
+		close(released)
+	}()
+	select {
+	case <-released:
+		t.Fatal("waitForSlot returned at the concurrency limit")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseSlot(d)
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitForSlot did not unblock after a slot freed")
+	}
+	releaseSlot(d)
 }

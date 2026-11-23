@@ -71,6 +71,30 @@ func TestMediaHandlerBlocksSensitiveAndUnknownFiles(t *testing.T) {
 	}
 }
 
+// TestMediaHandlerBlocksJellyideDir is the held T15 item: the managed
+// yt-dlp binary lives in <musicDir>/.jellyide, and T12's dotfile rule must
+// keep /media from serving it. The rule hides every path containing a
+// dotfile segment behind a 404.
+func TestMediaHandlerBlocksJellyideDir(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".jellyide", "bin", "yt-dlp"), "bin")
+	writeFile(t, filepath.Join(dir, ".jellyide", "settings.json"), "{}")
+	writeFile(t, filepath.Join(dir, "Artist", ".hidden", "cover.png"), "image")
+
+	handler := newMediaHandler(dir)
+	for _, path := range []string{
+		"/.jellyide/bin/yt-dlp",
+		"/.jellyide/settings.json",
+		"/Artist/.hidden/cover.png",
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: status = %d, want 404", path, rec.Code)
+		}
+	}
+}
+
 func TestSPAHandler(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "index.html"), "<html>index</html>")

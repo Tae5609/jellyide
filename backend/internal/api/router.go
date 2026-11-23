@@ -19,10 +19,14 @@ import (
 	"yt-scraper/internal/library"
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/scanner"
+	"yt-scraper/internal/ytdlp"
 )
 
 // RegisterRoutes registers all API routes to the provided router.
-func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service, meta *metadata.Service, jm *jobs.Manager, s *scanner.Scanner) {
+// requireAdmin wraps admin-only routes (the yt-dlp admin APIs and the
+// config POST); it is auth.Service.RequireAdmin in production and a
+// pass-through in tests.
+func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service, meta *metadata.Service, jm *jobs.Manager, s *scanner.Scanner, yt *ytdlp.Manager, requireAdmin func(http.Handler) http.Handler) {
 	// Download APIs
 	r.HandleFunc("/info", getInfo(d)).Methods("GET")
 	r.HandleFunc("/queue", queueDownloads(d)).Methods("POST")
@@ -33,9 +37,21 @@ func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service,
 	r.HandleFunc("/jobs/{id}/retry", retryJob(d)).Methods("POST")
 	r.HandleFunc("/jobs/retry-failed", retryFailedJobs(d)).Methods("POST")
 
-	// Config APIs
+	// Config APIs. Reading is open to every user; changing the
+	// concurrency and the proxy for the whole instance is admin-only
+	// (T15).
 	r.HandleFunc("/config", getConfig(d)).Methods("GET")
-	r.HandleFunc("/config", setConfig(d)).Methods("POST")
+	r.Handle("/config", requireAdmin(setConfig(d))).Methods("POST")
+
+	// yt-dlp admin APIs (T15): version check, update, rollback and
+	// settings for the managed binary. All behind requireAdmin.
+	adminYt := r.PathPrefix("/admin/ytdlp").Subrouter()
+	adminYt.Use(requireAdmin)
+	adminYt.HandleFunc("", ytdlpStatus(yt)).Methods("GET")
+	adminYt.HandleFunc("/check", ytdlpCheck(yt)).Methods("POST")
+	adminYt.HandleFunc("/update", ytdlpUpdate(yt)).Methods("POST")
+	adminYt.HandleFunc("/rollback", ytdlpRollback(yt)).Methods("POST")
+	adminYt.HandleFunc("/settings", ytdlpPutSettings(yt)).Methods("PUT")
 
 	// Library APIs
 	r.HandleFunc("/library/artists", getArtists(lib)).Methods("GET")
@@ -227,6 +243,8 @@ func getConfig(d *download.Downloader) http.HandlerFunc {
 	}
 }
 
+// setConfig changes the concurrency limit and proxy. It is mounted behind
+// the admin guard (see RegisterRoutes).
 func setConfig(d *download.Downloader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
