@@ -422,8 +422,8 @@ and `PUT /settings`):
 ```
 
 `latest_version` is `null` until the first check; `managed` is `false` when
-`YTDLP_MANAGED` is set to an explicit negative (the system `yt-dlp` on the `PATH` is used
-and no update is ever installed).
+`YTDLP_MANAGED` is set to an explicit negative — downloads then use the system `yt-dlp`
+on the `PATH` and the auto-update loop stays off.
 
 #### GET /api/admin/ytdlp
 
@@ -431,9 +431,9 @@ and no update is ever installed).
 
 #### POST /api/admin/ytdlp/check
 
-Refreshes the latest known release for the configured channel (2-minute bound) and
-records it; it never installs anything. Even a failed check returns the status shape,
-with the failure in `last_result`.
+Refreshes the latest known release for the configured channel (the release API gets the
+updater's 10-minute HTTP timeout) and records it; it never installs anything. Even a
+failed check returns the status shape, with the failure in `last_result`.
 
 - Response `200` — the status.
 
@@ -788,9 +788,9 @@ first — confidence 1; otherwise best normalized-title similarity, Levenshtein 
 }
 ```
 
-   Entries with `confidence` below 0.6 are rendered as low-confidence by the UI. The UI
-   applies the selection through `PATCH /api/metadata/tracks` and
-   `POST /api/library/albums/{id}/cover/from-url` — there is no separate apply endpoint.
+  Entries with `confidence` below 0.6 are rendered as low-confidence by the UI. The UI
+  applies the selection through `PATCH /api/metadata/tracks` and
+  `POST /api/library/albums/{id}/cover/from-url` — there is no separate apply endpoint.
 - Errors: `404 {"error":"album not found"}` · `500` (upstream MusicBrainz failure — the
   release fetch error is reported in the server log only).
 
@@ -881,9 +881,9 @@ table).
   bookkeeping of download jobs: a transient failure (network errors, HTTP 5xx/429) with
   retry budget left is set back to `queued` with `next_retry_at` armed
   (backoff 30 s / 2 min / 10 min, capped at 10 min; the budget is
-   `DOWNLOAD_MAX_RETRIES`, default 2, `0` disables it) — permanent failures (HTTP 403/404,
-   unavailable, private, members-only or copyrighted videos, and anything unrecognised)
-   are never retried.
+  `DOWNLOAD_MAX_RETRIES`, default 2, `0` disables it) — permanent failures (HTTP 403/404,
+  unavailable, private, members-only or copyrighted videos, and anything unrecognised)
+  are never retried.
 
 ### POST /api/jobs/clear
 
