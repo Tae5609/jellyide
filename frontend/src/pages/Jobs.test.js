@@ -28,8 +28,7 @@ function makeJob(overrides = {}) {
 // or a function of the current call count, so tests can observe refetches
 // and mutate state between them.
 function jobsFetch(jobs, { retryStatus = 200, retryBody, retryAllStatus = 200 } = {}) {
-  const impl = jest.fn(async (url, opts = {}) => {
-    const method = opts.method || 'GET';
+  const impl = jest.fn(async (url) => {
     if (url === '/api/jobs') {
       const list = typeof jobs === 'function' ? jobs() : jobs;
       return new Response(JSON.stringify(list), { status: 200 });

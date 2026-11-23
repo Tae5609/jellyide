@@ -40,12 +40,11 @@ export default function VersionConflictDialog({
   // overwrite a value the user has not seen.
   const [choices, setChoices] = useState({});
 
-  const titleOf = (trackId) => {
-    const t = tracks.find((tr) => tr.id === trackId);
-    return (t && t.title) || trackId;
-  };
-
   const rows = useMemo(() => {
+    const titleOf = (trackId) => {
+      const t = tracks.find((tr) => tr.id === trackId);
+      return (t && t.title) || trackId;
+    };
     const out = [];
     conflicts.forEach((c) => {
       const edit = (edits || []).find((e) => e.track_id === c.track_id);

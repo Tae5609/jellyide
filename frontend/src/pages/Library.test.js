@@ -64,9 +64,6 @@ async function clickScan(container) {
   });
 }
 
-const artistsFetches = (fetchMock) =>
-  fetchMock.mock.calls.filter((c) => c[0] === '/api/library/artists');
-
 // Renders the Library page with a fetch mock whose scan job can be
 // flipped to a terminal status between polls, and whose artist list
 // grows on every fetch (so refetches are observable).
@@ -107,9 +104,9 @@ async function renderScanWatch({ finalArtist = 'New Artist' } = {}) {
     }
     return new Response('[]', { status: 200 });
   });
-  const rendered = await renderLibrary(fetchImpl);
+  const view = await renderLibrary(fetchImpl);
   return {
-    ...rendered,
+    ...view,
     finishScan: (status) => {
       newJobStatus = status;
     },
@@ -157,9 +154,9 @@ async function renderTieScanWatch({ staleFirst = true } = {}) {
     }
     return new Response('[]', { status: 200 });
   });
-  const rendered = await renderLibrary(fetchImpl);
+  const view = await renderLibrary(fetchImpl);
   return {
-    ...rendered,
+    ...view,
     finishScan: (status) => {
       newJobStatus = status;
     },

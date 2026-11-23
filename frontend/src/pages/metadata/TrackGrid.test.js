@@ -201,7 +201,6 @@ describe('TrackGrid inline editing', () => {
   });
 
   test('dirty cells are highlighted and the original stays visible in the diff', async () => {
-    const user = userEvent.setup();
     const { container } = renderGrid({ edits: { 't1.title': 'One (New)' } });
 
     // The pending value is shown, marked as modified.

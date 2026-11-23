@@ -7,6 +7,7 @@ describe('safeRedirectFrom', () => {
     ['https://evil.com'],
     ['http:evil.com'],
     ['https:evil'],
+    // eslint-disable-next-line no-script-url -- the open-redirect guard must reject this payload
     ['javascript:alert(1)'],
     [''],
     [null],

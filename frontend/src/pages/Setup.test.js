@@ -87,7 +87,6 @@ describe('Setup page', () => {
     await act(async () => {
       container.querySelector('#setup-token').value = 'tok';
       container.querySelector('#setup-token').dispatchEvent(new Event('input', { bubbles: true }));
-      const form = container.querySelector('form');
       // Fill password fields with mismatching values via React synthetic events.
       const pwInput = container.querySelector('#setup-password');
       const cfInput = container.querySelector('#setup-confirm');
@@ -103,7 +102,6 @@ describe('Setup page', () => {
 
   test('redirects to /downloads when setup not required', async () => {
     // When setup_required is false, Setup redirects away.
-    const navigated = [];
     mockFetch({ setupRequired: false });
     const container = document.createElement('div');
     document.body.appendChild(container);

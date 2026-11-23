@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../../api';
 import { useModal } from '../../components/ModalContext';
@@ -126,7 +126,7 @@ export default function MetadataPage() {
   const pc = pendingCount(state);
   const diffRows = getDiff(state);
 
-  const refreshData = async () => {
+  const refreshData = useCallback(async () => {
     try {
       const aRes = await apiFetch(`/library/albums/${albumId}`);
       if (!aRes.ok) throw new Error(await errorFromResponse(aRes));
@@ -146,7 +146,7 @@ export default function MetadataPage() {
     } catch (e) {
       console.error('Error refreshing data:', e);
     }
-  };
+  }, [albumId, dispatch]);
 
   const refreshCover = async () => {
     setCoverKey((k) => k + 1);
@@ -161,7 +161,7 @@ export default function MetadataPage() {
   useEffect(() => {
     if (!albumId) return;
     refreshData();
-  }, [albumId]);
+  }, [albumId, refreshData]);
 
   useEffect(() => {
     try {

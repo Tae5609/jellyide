@@ -16,9 +16,14 @@ export default function Library() {
   const scanPollRef = useRef(null);
   const scanBaselineRef = useRef(null);
 
+  // Mount-only: load the artists once and stop any scan poll on unmount.
+  // The latest closures are read through a ref so the effect does not
+  // re-run (and refetch) whenever the selected artist changes.
+  const latest = useRef({});
   useEffect(() => {
-    fetchArtists();
-    return stopScanWatch;
+    const current = latest.current;
+    current.fetchArtists();
+    return () => current.stopScanWatch();
   }, []);
 
   const fetchArtists = async () => {
@@ -52,6 +57,8 @@ export default function Library() {
     }
     scanBaselineRef.current = null;
   };
+  latest.current.fetchArtists = fetchArtists;
+  latest.current.stopScanWatch = stopScanWatch;
 
   // Newest scan job wins on created_at; ties break on id so the result
   // is a total order that does not depend on the array order of the

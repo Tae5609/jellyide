@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../api';
 import { errorFromResponse } from './useEditorState';
 
@@ -16,6 +16,7 @@ function textOf(v) {
 // release cover URL to the parent.
 export default function LookupDialog({ albumId, album, onClose, onApply, onError }) {
   const defaultQuery = `${album.artist || ''} ${album.title || ''}`.trim();
+  const initialQuery = useRef(defaultQuery);
   const [query, setQuery] = useState(defaultQuery);
   const [results, setResults] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -44,8 +45,8 @@ export default function LookupDialog({ albumId, album, onClose, onApply, onError
   );
 
   useEffect(() => {
-    search(defaultQuery);
-  }, []);
+    search(initialQuery.current);
+  }, [search]);
 
   const openRelease = async (mbid) => {
     setLoadingRelease(true);
