@@ -100,3 +100,56 @@ Product owner: opencode `orchestrator` agent. Update after every state change.
 - `.track-old` has no `word-break` (T2 reviewer note): a single very long unbroken word could push horizontal scroll at 360px — polish candidate for T9 or a follow-up.
 - Desktop nav `title` tooltips now appear on hover at all widths (required mechanism for the rail; T2 reviewer note).
 - `/api/info` SSRF surface (yt-dlp fetches arbitrary user-supplied URL) — logged in BUGS.md, needs a product decision (host allowlist vs proxy-only mode).
+
+## FINAL DELIVERY REPORT (2026-11-23 — supervised restart #4, orchestrator)
+
+**Roadmap complete.** Every task is merged; no blocked tasks; every merge went through green CI with full PR-template bodies and Conventional commits. The planner cut **v2.0.0** at `7500049` (https://github.com/Tae5609/jellyide/releases/tag/v2.0.0) after T20 merged.
+
+### Merged roadmap PRs (code + docs)
+| Task | PR | Task | PR |
+|---|---|---|---|
+| T1 auth/session | [#3](https://github.com/Tae5609/jellyide/pull/3) | T13 Library fixes | [#20](https://github.com/Tae5609/jellyide/pull/20) |
+| T2 library UI | [#4](https://github.com/Tae5609/jellyide/pull/4) | T6a core docs | [#21](https://github.com/Tae5609/jellyide/pull/21) |
+| T7 option-injection/SPA | [#5](https://github.com/Tae5609/jellyide/pull/5) | T19 setup wizard + admin CLI | [#26](https://github.com/Tae5609/jellyide/pull/26) |
+| T3 settings UX | [#9](https://github.com/Tae5609/jellyide/pull/9) | T17 no-overwrite rename | [#29](https://github.com/Tae5609/jellyide/pull/29) |
+| T4 OIDC | [#7](https://github.com/Tae5609/jellyide/pull/7) | T11 metadata editor + shortcuts | [#30](https://github.com/Tae5609/jellyide/pull/30) |
+| T5 SAML | [#8](https://github.com/Tae5609/jellyide/pull/8) | T18 CONCURRENT_DOWNLOAD env | [#31](https://github.com/Tae5609/jellyide/pull/31) |
+| T8 admin/users | [#12](https://github.com/Tae5609/jellyide/pull/12) | T14 download retry | [#33](https://github.com/Tae5609/jellyide/pull/33) |
+| T10 bulk edit/history | [#13](https://github.com/Tae5609/jellyide/pull/13) | T12 backend hardening | [#34](https://github.com/Tae5609/jellyide/pull/34) |
+| T13b Register act() | [#35](https://github.com/Tae5609/jellyide/pull/35) | T13c scan-job tiebreak | [#36](https://github.com/Tae5609/jellyide/pull/36) |
+| T15 yt-dlp updater | [#37](https://github.com/Tae5609/jellyide/pull/37) | T12b bug sweep | [#38](https://github.com/Tae5609/jellyide/pull/38) |
+| T6b ops docs + smoke | [#39](https://github.com/Tae5609/jellyide/pull/39) | auth smoke in CI | [#40](https://github.com/Tae5609/jellyide/pull/40) |
+| T16 sync conflicts | [#41](https://github.com/Tae5609/jellyide/pull/41) | T9 frontend quality | [#42](https://github.com/Tae5609/jellyide/pull/42) |
+| embedded artwork cover | [#43](https://github.com/Tae5609/jellyide/pull/43) | T20 docs refresh | [#44](https://github.com/Tae5609/jellyide/pull/44) |
+
+Plan/ops record PRs: #14–#19, #22, #24, #25, #27, #28, #32.
+
+### Session shape (restart #4, 2026-11-23 ~00:30 → 10:40)
+Orchestrator owned and shipped: T13c (#36), T12 (#34, incl. the 18× auth-suite speedup, post-merge rebase + focused resolution review), T12b (#38), T15 finalize (#37 opened; planner merged), and the docs-refresh prep. Mid-session the planner progressively took over T15, T12b, T16 (#41), T9 (#42) and T20 (#44) + the v2.0.0 release via inbox orders P1–P18; all handoffs clean, no double-shipping, no HOLD workarounds. Notable ops: the 03:15 push that produced no CI run (transient suppression — next push fired in 3 min), the workflow-scope push wall (resolved by P8), and the shared-worktree scare (planner's T9 subagent was working in the worktree I had just created for the refused T9 dispatch — caught before a force-remove).
+
+### Open bugs (docs/plan/BUGS.md — 8, this PR's version is authoritative)
+1. `/api/info` SSRF surface (found T7) — **product decision**: host allowlist vs proxy-only mode.
+2. SPA: missing assets with file extension still serve index.html — T20's "fixed in T12" tick unsupported; PO re-verified against 7500049 (handler unchanged).
+3. `uniqueExternalName` check-then-insert race (loser gets 500, not next suffix) — same: tick unsupported, re-opened.
+4. SPA `os.Stat` non-"not exist" error → nil `info.IsDir()` panic — same: tick unsupported, re-opened.
+5. Stale `next_retry_at` kept after a job completes post-auto-retry (inert today; clear on terminal status) — T14 review.
+6. Rare ytdlp test flake under `-race` (sha256 mismatch once, 8/8 on rerun) — make deterministic.
+7. **Compose does not forward `TRUST_PROXY`, `DOWNLOAD_MAX_RETRIES`, `YTDLP_MANAGED`, `SYNC_CONFLICT_POLICY`** — the documented `.env` way is silently a no-op for these four (T20).
+8. `/api/sync/*` + `/api/admin/ytdlp/*` decode JSON without the 1 MiB `decodeJSONBody` cap (T20; T12/T12b pattern applies).
+
+### Ideas (out of scope, logged for later)
+- Root-package `admin_cli_test` is the slowest backend package (68–76s): it hashes at bcrypt cost-12 and can't use auth's unexported test seam — expose a test hook or move the CLI tests.
+- Register.test.js: dedicated 403-CSRF-error surfacing case (T12b reviewer non-blocking note).
+- T14 race tests: add a start barrier (pre-fix proofs are currently probabilistic).
+- Metadata editor 2.1.1: pointer-only cells lack keyboard entry (T11 note).
+- `.track-old` `word-break` at 360px; desktop nav hover tooltips (T2 notes).
+- Coverage threshold 60 → 75 as the suite matures.
+
+### Suggested next roadmap (v2.1 candidates)
+1. **Security sweep (small, backend-only, T12/T12b precedents):** item 8 (capped bodies on sync/ytdlp), item 4 (stat guard), item 3 (external-name race retry).
+2. **v2.0.1 hotfix:** item 7 (forward the 4 env vars in both compose files + `.env.example` verification test) — operators following the docs are silently on defaults today.
+3. **SSRF decision** (item 1) → implement allowlist or proxy-only for `/api/info`.
+4. **Chores PR:** item 2 (SPA 404), item 5 (clear `next_retry_at`), item 6 (deterministic ytdlp tests).
+5. **Test hardening:** Playwright e2e for the first-run setup wizard and the sync-conflict resolution flows; raise coverage threshold.
+
+**Completion note:** with this PR merged, the roadmap is fully delivered. The orchestrator then touches `docs/plan/logs/ORCHESTRATOR_FINISHED` per the supervised-restart order and stops.
