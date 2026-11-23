@@ -1,10 +1,9 @@
 # JellyIDE HTTP API reference
 
 Every endpoint the Go server exposes, grouped by area. The reference is taken from the
-code: routes from `backend/internal/api/router.go` and `backend/internal/auth/`
-(`handlers.go`, `admin.go`, `oidc.go`, `saml.go`), request and response shapes from the
-handler bodies. Behaviour of the not-yet-merged hardening task T12 is marked where it
-changes a documented answer.
+code: routes from `backend/internal/api/router.go` (`sync.go`, `ytdlp.go`) and
+`backend/internal/auth/` (`handlers.go`, `setup.go`, `admin.go`, `oidc.go`, `saml.go`),
+request and response shapes from the handler bodies.
 
 ## Table of contents
 
@@ -20,6 +19,7 @@ changes a documented answer.
 - [6. Download and jobs](#6-download-and-jobs)
 - [7. Config](#7-config)
 - [8. Media](#8-media)
+- [9. Sync conflicts](#9-sync-conflicts)
 
 ## General conventions
 
@@ -45,12 +45,18 @@ The auth middleware (`backend/internal/auth/middleware.go`) wraps the whole rout
 | Path class | Session required? | CSRF header required? |
 |---|---|---|
 | everything outside `/api/` and `/media/` (the SPA) | no | no |
-| `/api/auth/*`, except `/api/auth/me`, `/api/auth/logout`, `/api/auth/password` | no | no |
+| `/api/auth/*`, except `/api/auth/me`, `/api/auth/logout`, `/api/auth/password` | no | no (login and register instead require the [login-CSRF token](#the-login-csrf-token) in the body) |
+| `/api/setup/*` (first-run wizard) | no | no |
 | all other `/api/*` and all `/media/*` | **yes** | only on `POST`, `PUT`, `PATCH`, `DELETE` |
 | `/api/admin/*` | yes | yes (state changes) — plus the caller must be an admin, else `403 {"error":"admin required"}` |
 
 A missing or invalid session answers `401 {"error":"unauthorized"}`. A state-changing
 request without the CSRF header answers `403 {"error":"csrf"}`.
+
+While first-run setup is pending (no users exist yet), every `/api/*` route except
+`/api/auth/providers` and the `/api/setup/*` pair, plus all of `/media/*`, answers
+`503 {"error":"setup_required"}` instead; the gate opens without a restart as soon as the
+first user exists.
 
 #### The CSRF header
 
@@ -66,6 +72,23 @@ SPA adds the header to every call through `apiFetch` (`frontend/src/api.js`), so
 flow works end to end. The check is a same-site CSRF guard for cookie-authenticated requests:
 a cross-origin form post cannot set custom headers. Third-party clients must send it on every
 state-changing call, else they receive `403 {"error":"csrf"}`.
+
+#### The login-CSRF token
+
+The public login and register endpoints do not need a session, so the header check above
+does not apply to them. They are protected by a double-submit token instead:
+
+1. `GET /api/auth/csrf` (public) returns a random token in the body **and** mirrors it in
+   the `jellyide_login_csrf` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` when
+   `COOKIE_SECURE=true`, 1-hour expiry).
+2. `POST /api/auth/login` and `POST /api/auth/register` must echo the token in the body
+   (`csrf_token`); the server compares it with the cookie. A cross-site page can read
+   neither the body (no CORS) nor a fresh cookie (Lax), so a forged login or registration
+   gets `403 {"error":"login csrf mismatch"}`.
+
+The bundled SPA fetches the token automatically before submitting
+(`frontend/src/auth/AuthContext.js` for login, `frontend/src/pages/Register.js` for
+registration).
 
 ### Error shape and status codes
 
@@ -92,11 +115,12 @@ track:
 | `400 Bad Request` | malformed JSON, missing or invalid parameters, validation failures |
 | `401 Unauthorized` | no valid session; wrong credentials |
 | `403 Forbidden` | CSRF header missing; not an admin; forbidden action (registration off, own-account rules) |
-| `404 Not Found` | album, track, cover or change set does not exist |
-| `409 Conflict` | username taken; metadata target exists; affected track no longer exists |
-| `429 Too Many Requests` | login/register failure limit reached (10 failures per IP per 15 minutes) |
+| `404 Not Found` | album, track, cover, change set or job does not exist |
+| `409 Conflict` | username taken; metadata target exists; affected track no longer exists; version-lock conflict |
+| `413 Request Entity Too Large` | JSON body above the 1 MiB cap (`request body too large`; cover uploads have their own 10 MB limit) |
+| `429 Too Many Requests` | login/register failure limit reached (10 failures per IP per 15 minutes); setup-token limit reached (5 per IP per 15 minutes) |
 | `500 Internal Server Error` | backend failure; the message is the internal error text |
-| `503 Service Unavailable` | OIDC endpoints called while OIDC is disabled |
+| `503 Service Unavailable` | OIDC endpoints called while OIDC is disabled; any API/media route while first-run setup is pending (see [first-run setup](#first-run-setup)) |
 
 ---
 
@@ -118,29 +142,35 @@ Public. Describes what the login page may offer.
   "local": true,
   "oidc": { "enabled": false, "name": "" },
   "saml": { "enabled": false, "name": "" },
-  "registration": "admin_only"
+  "registration": "admin_only",
+  "setup_required": false
 }
 ```
 
 `registration` is the current mode: `admin_only` | `open` | `approval`.
+`setup_required` is `true` while the first-run setup wizard is pending
+(the SPA then redirects every route to `/setup`).
 
 ### POST /api/auth/login
 
-Public (no session, no CSRF header needed). Verifies the bcrypt hash; an unknown username
-still runs a bcrypt comparison against a dummy hash so timing does not leak existence.
+Public (no session, no CSRF header needed), but the body must carry the
+[login-CSRF token](#the-login-csrf-token) from `GET /api/auth/csrf`. Verifies the bcrypt
+hash; an unknown username still runs a bcrypt comparison against a dummy hash so timing
+does not leak existence.
 
 - Request:
 
 ```json
-{ "username": "admin", "password": "…" }
+{ "username": "admin", "password": "…", "csrf_token": "…" }
 ```
 
 - Response `200` — the authenticated [user object](#user-object); the server also sets the
   `HttpOnly` session cookie `jellyide_session` (`SameSite=Lax`; `Secure` when
   `COOKIE_SECURE=true`; 7-day sliding expiry).
 - Errors: `400` invalid json · `401 {"error":"invalid credentials"}` ·
-  `403` `account pending approval` | `account disabled` ·
-  `403 {"error":"local login disabled"}` · `429` too many failed attempts.
+  `403` `login csrf mismatch` | `account pending approval` | `account disabled` ·
+  `403 {"error":"local login disabled"}` · `413` body too large ·
+  `429` too many failed attempts.
 
 The account status is checked only after a correct password, so a wrong password never
 reveals whether the account is pending or disabled.
@@ -180,12 +210,15 @@ Session + CSRF header required. Local users only.
 ### POST /api/auth/register
 
 Public. Honours the registration mode from the `settings` table (seeded once from
-`REGISTRATION_MODE`; the database value wins afterwards).
+`REGISTRATION_MODE`; the database value wins afterwards). Like login, the body must carry
+the [login-CSRF token](#the-login-csrf-token); in mode `admin_only` the
+`403 registration is disabled` answer is given before the token is checked.
 
 - Request:
 
 ```json
-{ "username": "peter", "password": "at least 8 chars", "email": "optional@example.org" }
+{ "username": "peter", "password": "at least 8 chars", "email": "optional@example.org",
+  "csrf_token": "…" }
 ```
 
 Usernames must match `^[a-zA-Z0-9._-]{3,32}$`.
@@ -198,8 +231,39 @@ Usernames must match `^[a-zA-Z0-9._-]{3,32}$`.
 
   In mode `approval` the status is `pending` and no session is issued.
 - Errors: `400` invalid username / password too short · `403 registration is disabled`
-  (mode `admin_only`) or `local login disabled` · `409 username already taken` ·
-  `429` too many failed attempts (shared limiter with login).
+  (mode `admin_only`) or `local login disabled` · `403 {"error":"login csrf mismatch"}` ·
+  `409 username already taken` · `413` body too large ·
+  `429` too many failed attempts (shared limiter with login — validation rejections feed
+  it too).
+
+### First-run setup
+
+The first-run wizard (`backend/internal/auth/setup.go`). While it is pending, the setup
+gate answers `503 {"error":"setup_required"}` for every other API route and for
+`/media/*` (see [Authentication and the CSRF header](#authentication-and-the-csrf-header)).
+
+#### GET /api/setup/status
+
+Public. - Response `200`: `{ "setup_required": true }`
+
+#### POST /api/setup/complete
+
+Public. Creates the first admin (active, `is_admin`), starts a session for it and ends
+setup mode immediately — no restart. The whole completion runs in one transaction, so it
+completes exactly once.
+
+- Request:
+
+```json
+{ "token": "…", "username": "admin", "password": "at least 8 chars", "email": "…" }
+```
+
+  The `token` is the one-time setup token printed to the server log; the username and
+  password follow the same rules as registration.
+- Response `201` — the new [user object](#user-object) and a session cookie.
+- Errors: `400` invalid username / password too short · `403 {"error":"invalid setup
+  token"}` · `409 {"error":"setup already complete"}` · `413` body too large ·
+  `429` too many failed attempts (stricter limit than login: 5 per IP per 15 minutes).
 
 ### User object
 
@@ -334,6 +398,77 @@ Response `200`: `{ "registration_mode": "admin_only" }` (`admin_only` | `open` |
 - Response `204`.
 - Errors: `400 invalid registration mode`.
 
+### yt-dlp updater
+
+The managed yt-dlp binary (`backend/internal/ytdlp/`). All five routes require an admin
+session. They share one status shape (returned by `GET`, `POST /check`, `POST /rollback`
+and `PUT /settings`):
+
+```json
+{
+  "version": "2025.11.21",
+  "path": "/mnt/media/music/.jellyide/bin/yt-dlp",
+  "managed": true,
+  "channel": "stable",
+  "latest_version": "2025.12.01",
+  "update_available": true,
+  "last_check": "2026-11-22T09:00:00Z",
+  "last_result": "checked 2025.12.01",
+  "auto_update": true,
+  "interval_hours": 24,
+  "updating": false,
+  "has_rollback": true
+}
+```
+
+`latest_version` is `null` until the first check; `managed` is `false` when
+`YTDLP_MANAGED` is set to an explicit negative (the system `yt-dlp` on the `PATH` is used
+and no update is ever installed).
+
+#### GET /api/admin/ytdlp
+
+- Response `200` — the status. Errors: `500`.
+
+#### POST /api/admin/ytdlp/check
+
+Refreshes the latest known release for the configured channel (2-minute bound) and
+records it; it never installs anything. Even a failed check returns the status shape,
+with the failure in `last_result`.
+
+- Response `200` — the status.
+
+#### POST /api/admin/ytdlp/update
+
+Always enqueues a `ytdlp_update` job (poll `/api/jobs` for the outcome — "updated to
+…" or "up to date: …" in its progress) and answers immediately. An update swap pauses
+new downloads, waits for running ones (10-minute bound) and restores the previous
+binary on any failure; the updater can never break downloads.
+
+- Request (optional body): `{ "force": true }` — reinstall even when the binary in use
+  already matches the known latest release.
+- Response `202`: `{ "job_id": "…" }`
+- Errors: `409 {"error":"an update is already running"}` · `500`.
+
+#### POST /api/admin/ytdlp/rollback
+
+Restores the previous binary (`yt-dlp.prev`); it shares the single update slot, so it is
+refused (not blocked) while an update is in flight.
+
+- Response `200` — the status.
+- Errors: `409` `no previous binary to roll back to` | `an update is already running` ·
+  `500`.
+
+#### PUT /api/admin/ytdlp/settings
+
+Partial update of the updater options; absent members keep their value.
+
+- Request: any of `{ "auto_update": false, "interval_hours": 48, "channel": "stable" }`
+  — `interval_hours` 6…168 (default 24), `channel` `stable` | `nightly` (default
+  `stable`), `auto_update` default `true` (a disabled auto-update still honours the
+  forced first-start install and manual updates).
+- Response `200` — the status.
+- Errors: `400` invalid json / value out of range · `500`.
+
 ---
 
 ## 4. Library
@@ -446,11 +581,11 @@ Response `200` — track object (see above). Errors: `404 {"error":"track not fo
 
 ### DELETE /api/library/tracks/{id}
 
-Removes one track from the database; the file on disk stays.
+Removes one track from the database; the file on disk stays. The track's
+`metadata_changes` rows are removed with it (`ON DELETE CASCADE`), so a track with
+recorded edits can be deleted.
 
-- Response `200` (empty body). Errors: `500`.
-- Note: deleting a track that has recorded metadata changes currently fails with a foreign
-  key violation (`500`) — see `docs/plan/BUGS.md`.
+- Response `200` (empty body). Errors: `404 {"error":"track not found"}` · `500`.
 
 ### POST /api/library/scan
 
@@ -537,7 +672,8 @@ The bulk-edit endpoint. Validates every entry, then queues a `metadata` job with
 {
   "edits": [
     { "track_id": "4c9d…",
-      "fields": { "title": "Autobahn", "track_number": 1, "year": 1974, "comment": null } }
+      "fields": { "title": "Autobahn", "track_number": 1, "year": 1974, "comment": null },
+      "expected_version": 3 }
   ]
 }
 ```
@@ -547,6 +683,12 @@ The bulk-edit endpoint. Validates every entry, then queues a `metadata` job with
   - `title` must not be empty; integers must be non-null non-negative (use `null` to
     clear). An `album` edit repoints the track to the target album row (created if
     needed); the file on disk is not renamed for album edits.
+  - `expected_version` (optional) is the optimistic lock: the `version` the editor
+    loaded (the editor sends the version of every row in the grid). The check runs
+    synchronously **and** is re-checked when the job runs; a track that moved in the
+    meantime is skipped and recorded as a `concurrent` sync conflict. While the apply
+    runs, every edited field is re-read from the file first — an external change there
+    skips the track, records an `apply` conflict and leaves both sides untouched.
 - Response `202`:
 
 ```json
@@ -561,6 +703,11 @@ The bulk-edit endpoint. Validates every entry, then queues a `metadata` job with
   name instead`, `duplicate field in one request`, range messages (`year must be between 0
   and 9999, got N`, `track_number must be between 0 and 999, got N`) ·
   `404 {"error":"track not found","track_id":"…"}` (checked before the job is queued) ·
+  `409` when **every** track already lost the version lock —
+  `{ "error": "N track(s) were changed by another user; re-apply with the new version",
+  "conflicts": [ { "track_id": "…", "reason": "version_conflict", "current": { …current
+  field values… }, "current_version": 4 } ] }` (a **partial** conflict answers `202`; the
+  job skips the stale tracks and reports them in its results) ·
   `500`.
 
 ### GET /api/metadata/history
@@ -641,11 +788,32 @@ first — confidence 1; otherwise best normalized-title similarity, Levenshtein 
 }
 ```
 
-  Entries with `confidence` below 0.6 are rendered as low-confidence by the UI. The UI
-  applies the selection through `PATCH /api/metadata/tracks` and
-  `POST /api/library/albums/{id}/cover/from-url` — there is no separate apply endpoint.
+   Entries with `confidence` below 0.6 are rendered as low-confidence by the UI. The UI
+   applies the selection through `PATCH /api/metadata/tracks` and
+   `POST /api/library/albums/{id}/cover/from-url` — there is no separate apply endpoint.
 - Errors: `404 {"error":"album not found"}` · `500` (upstream MusicBrainz failure — the
   release fetch error is reported in the server log only).
+
+### POST /api/metadata/rename-collisions
+
+Dry run: for the pending edits, which title changes would rename onto a file name that is
+already taken in the album. The review dialog uses it to offer **add a number** (suffix) /
+**skip the rename** / **replace** (the existing file is moved to the trash) per colliding
+track. Unknown tracks and no-op title changes are skipped; the reports come back in
+request order.
+
+- Request: `{ "edits": [ { "track_id": "…", "fields": { "title": "…" } } ] }`
+- Response `200`:
+
+```json
+[
+  { "track_id": "4c9d…", "new_title": "Autobahn", "collides": true,
+    "target_path": "/mnt/media/music/Kraftwerk/Autobahn/Autobahn.flac",
+    "existing_name": "Autobahn.flac" }
+]
+```
+
+- Errors: `400 invalid json` · `500`.
 
 ---
 
@@ -689,7 +857,8 @@ Queues one download per element (FLAC extraction, embedded thumbnail and metadat
 
 ### GET /api/jobs
 
-Lists every job, newest first (download, scan and metadata jobs share one table).
+Lists every job, newest first (download, scan, metadata and yt-dlp-update jobs share one
+table).
 
 - Response `200`:
 
@@ -697,21 +866,46 @@ Lists every job, newest first (download, scan and metadata jobs share one table)
 [
   { "id": "c0ffee…", "type": "download", "status": "completed",
     "details": "{\"video_id\":\"dQw4…\",…}", "progress": "100%", "error": "",
+    "attempts": 1, "next_retry_at": null,
     "created_at": "2026-11-22T09:00:00Z", "updated_at": "2026-11-22T09:03:11Z" }
 ]
 ```
 
-  `type`: `download` | `scan` | `metadata`. `status`: `queued` | `running` |
-  `downloading` | `completed` | `failed`. `details` is the JSON-encoded job details — for
-  `download` the queued `Details` (`video_id`, `title`, `artist`, `album`, `thumbnail`), for
-  `scan` `{ "path": … }`, and for `metadata` an `action` marker: `apply_edits`,
-  `revert_change_set` or `embed_cover` (plus `change_set_id` where applicable).
+  `type`: `download` | `scan` | `metadata` | `ytdlp_update`. `status`: `queued` |
+  `running` | `downloading` | `completed` | `failed`. `details` is the JSON-encoded job
+  details — for `download` the queued `Details` (`video_id`, `title`, `artist`, `album`,
+  `thumbnail`), for `scan` `{ "path": … }`, for `metadata` an `action` marker:
+  `apply_edits`, `revert_change_set`, `embed_cover` or `resolve_conflicts` (plus
+  `change_set_id` where applicable), and for `ytdlp_update` the `channel` and `reason`
+  (`manual` or `auto`). `attempts` and `next_retry_at` are the automatic-retry
+  bookkeeping of download jobs: a transient failure (network errors, HTTP 5xx/429) with
+  retry budget left is set back to `queued` with `next_retry_at` armed
+  (backoff 30 s / 2 min / 10 min, capped at 10 min; the budget is
+  `DOWNLOAD_MAX_RETRIES`, default 2, `0` disables it) — permanent failures (HTTP 403/404,
+  unavailable or private videos) are never retried.
 
 ### POST /api/jobs/clear
 
 Deletes all jobs in state `completed` or `failed`.
 
 - Response `200` (empty body). Errors: `500`.
+
+### POST /api/jobs/{id}/retry
+
+Manually re-queues one failed **download** job; the dispatcher runs it immediately. The
+job's `attempts` counter is advanced, so a manual retry counts against the
+automatic-retry budget (`DOWNLOAD_MAX_RETRIES`).
+
+- Response `200` — the [job](#get-api-jobs) object.
+- Errors: `404 {"error":"job not found"}` · `409 {"error":"job is not a failed download"}` ·
+  `500`.
+
+### POST /api/jobs/retry-failed
+
+Re-queues every failed download job.
+
+- Response `200`: `{ "retried": 3 }`
+- Errors: `500`.
 
 ---
 
@@ -726,12 +920,14 @@ variables — is documented in [Deployment](DEPLOYMENT.md).)
 
 ### POST /api/config
 
+Admin only (`403 {"error":"admin required"}` otherwise).
+
 - Request: `{ "concurrent_limit": 4, "proxy": "http://proxy:3128" }`
 - Response `200` (empty body). Errors: `400 invalid json` — previous values are kept.
-- Note: values are not persisted; a restart restores the built-in limit (2 — hard-coded in
-  `download.NewDownloader`) and no proxy. The compose environment variable
-  `CONCURRENT_DOWNLOAD` is never read by the server code — logged in
-  `docs/plan/BUGS.md`.
+- Note: values are not persisted; a restart restores the limit the
+  `CONCURRENT_DOWNLOAD` environment variable resolved to at startup (the variable is read
+  in `download.NewDownloader`: missing, invalid or below-1 values fall back to the
+  default of 2, values above 32 are clamped to 32) and no proxy.
 
 ---
 
@@ -747,10 +943,154 @@ covers use this area.
   header. `401` without a session.
 - Path names are cleaned (`filepath.Clean`) and must stay inside `DOWNLOAD_DIR`;
   `library.CoverFilePath` refuses URLs that would escape the music dir.
-- Caution (hardening in flight in T12): the whole directory tree is served today,
-  including `jellyide.db*`, dotfiles and the `saml/` key directory — logged in
-  `docs/plan/BUGS.md`. Until T12 lands, do not expose this server without a session in
-  front of it.
+- Only known media files are served: the audio extensions `flac`, `mp3`, `m4a`, `aac`,
+  `ogg`, `opus`, `wav` and the image extensions `jpg`, `jpeg`, `png`, `gif`, `webp`.
+  Anything else — dotfiles at any level, `jellyide.db*`, the `saml/` directory, unknown
+  extensions — answers `404` as if it did not exist.
+
+---
+
+## 9. Sync conflicts
+
+Detection and user-chosen resolution of DB-vs-file divergence. All routes need a
+session; state-changing ones also the CSRF header. The model — fingerprints, policies,
+optimistic locking — is documented in [the metadata guide](METADATA.md#sync-conflicts-and-the-conflicts-page).
+
+### GET /api/sync/conflicts
+
+Lists the conflict rows, grouped by track.
+
+- Query: `status` — `open` (default) | `resolved` | `dismissed`; `album_id` (optional).
+- Response `200`:
+
+```json
+[
+  { "track_id": "4c9d…", "track_title": "Autobahn", "album_id": "1a2b…",
+    "fields": [
+      { "id": "…", "conflict_id": "…", "track_id": "4c9d…", "field": "title",
+        "db_value": "Autobahn [Official Audio]", "file_value": "Autobahn",
+        "source": "scan", "detected_at": "2026-11-22 09:00:00", "status": "open",
+        "resolved_by": null, "resolved_at": null, "resolution": null } ] }
+]
+```
+
+  `source`: `scan` (changed on disk by another program), `apply` (external change found
+  while an apply was running) or `concurrent` (another editor won the version lock).
+- Errors: `400 {"error":"status must be open, resolved or dismissed"}` · `500`.
+
+### GET /api/sync/summary
+
+The sidebar badge payload.
+
+- Response `200`: `{ "open_conflicts": 2, "missing_tracks": 1 }`
+
+### POST /api/sync/conflicts/resolve
+
+Applies the requested per-field resolutions through a metadata job
+(`details.action: "resolve_conflicts"`), so the outcome is recorded in the change history
+and revertible like any other edit. A failed field leaves its conflict open for another
+attempt.
+
+- Request:
+
+```json
+{ "resolutions": [
+    { "conflict_id": "…", "choice": "db" },
+    { "conflict_id": "…", "choice": "custom", "value": "Autobahn (Remaster)" } ] }
+```
+
+  - `choice`: `db` (rewrite the file tags from the DB) · `file` (update the DB from the
+    file) · `custom` (write the supplied `value` to both — `value` is required).
+- Response `202`: `{ "job_id": "…" }`
+- Errors: `400` — `invalid resolution: resolutions must not be empty`,
+  `invalid resolution: conflict_id is required`,
+  `invalid resolution: invalid choice "…" (want db, file or custom)`,
+  `invalid resolution: custom choice for conflict … needs a value` ·
+  `404 {"error":"not found"}` · `409 {"error":"conflict is no longer open"}` · `500`.
+
+### POST /api/sync/conflicts/resolve-all
+
+Resolves every open conflict (optionally one album only) with one choice.
+
+- Request: `{ "album_id": "…", "choice": "db" }` — `choice` is `db` or `file` (custom has
+  no global value).
+- Response `202`: `{ "job_id": "…" }`
+- Errors: `400` — `invalid resolution: resolve-all choice must be db or file, got "…"` |
+  `invalid resolution: no open conflicts to resolve` · `409` · `500`.
+
+### POST /api/sync/conflicts/{id}/dismiss
+
+Marks one conflict `dismissed` — the divergence is acknowledged and left in place.
+
+- Response `200` — the conflict row.
+- Errors: `404 {"error":"not found"}` · `409 {"error":"conflict is no longer open"}` · `500`.
+
+### GET /api/sync/missing
+
+Lists the tracks whose file is gone from disk (state `missing`; the row and its history
+are kept). Each entry carries its relink candidates: existing files with the same size,
+a duration within 1 second and the same tags hash.
+
+- Response `200`:
+
+```json
+[
+  { "track_id": "4c9d…", "album_id": "1a2b…", "title": "Autobahn",
+    "artist": "Kraftwerk", "album": "Autobahn", "path": "/mnt/media/music/…",
+    "duration": 372, "size": 31000000,
+    "candidates": [ { "track_id": "…", "path": "…", "title": "Autobahn", "duration": 372 } ] }
+]
+```
+
+### POST /api/sync/missing/{track_id}/relink
+
+Re-points a missing track at one of its candidate files: the track id and the history
+rows are kept, the duplicate row a scan created for the same file is removed, and the
+candidate's fingerprint is adopted.
+
+- Request: `{ "path": "/mnt/media/music/…/Autobahn.flac" }`
+- Response `200` — the updated track object.
+- Errors: `404 {"error":"not found"}` · `409` `track is not missing` |
+  `path is not a relink candidate for this track` · `500`.
+
+### DELETE /api/sync/missing/{track_id}
+
+Removes a missing row (the file is gone; its history rows go with it).
+
+- Response `200` (empty body).
+- Errors: `404 {"error":"not found"}` · `409 {"error":"track is not missing"}` · `500`.
+
+### GET /api/sync/trash
+
+Lists the files displaced by "replace" rename collisions
+(`<DOWNLOAD_DIR>/.jellyide/trash`), oldest first.
+
+- Response `200`: `[ { "id": "…", "original_path": "…", "trash_path": "…",
+  "track_id": "…", "created_at": "…" } ]`
+
+### POST /api/sync/trash/{id}/restore
+
+Moves a trashed file back to its original path and drops the entry.
+
+- Response `200` (empty body).
+- Errors: `404 {"error":"trash entry not found"}` ·
+  `409 {"error":"the original file path is taken again"}` · `500`.
+
+### GET /api/admin/settings/sync
+
+Admin. Returns the active sync conflict policy.
+
+- Response `200`: `{ "policy": "ask" }`
+
+### PUT /api/admin/settings/sync
+
+Admin. Changes the policy (the settings-table value wins over the
+`SYNC_CONFLICT_POLICY` environment variable from this point on).
+
+- Request: `{ "policy": "file_wins" }` — `ask` (default) | `file_wins` | `db_wins`.
+- Response `200`: `{ "policy": "file_wins" }`
+- Errors: `400` `invalid policy "…" (want ask, file_wins or db_wins)` ·
+  `403 {"error":"admin access required"}`.
 
 ---
 
