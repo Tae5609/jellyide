@@ -2447,3 +2447,132 @@ tr:hover td {
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* T16: sync conflicts page, chips and rename collision select         */
+/* ------------------------------------------------------------------ */
+
+/* Conflict / missing chips in the metadata grid (table + cards). */
+.sync-chip {
+  border: none;
+  border-radius: 9px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 18px;
+  margin-right: 4px;
+}
+.conflict-chip {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning, #f59e0b);
+}
+.missing-chip {
+  background: rgba(148, 163, 184, 0.15);
+  color: var(--text-muted);
+}
+.td-track-actions {
+  white-space: nowrap;
+}
+
+/* Conflicts page layout. */
+.sync-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sync-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.sync-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.sync-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sync-group {
+  padding: 16px;
+}
+.sync-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.sync-group-title {
+  margin: 0;
+  font-size: 15px;
+}
+.sync-group-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sync-bulk-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sync-muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.sync-path {
+  margin: 6px 0;
+  word-break: break-all;
+}
+.sync-path code,
+.sync-path-inline {
+  font-size: 12px;
+}
+.sync-source-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.sync-choice-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sync-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sync-custom-input {
+  min-width: 160px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.sync-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+/* Rename collision row in the review dialog. */
+.review-collision-row td {
+  background: rgba(245, 158, 11, 0.08);
+}
+.collision-select {
+  max-width: 260px;
+  padding: 4px 8px;
+  font-size: 13px;
+}

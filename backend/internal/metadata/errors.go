@@ -25,11 +25,22 @@ type (
 		Message string
 		TrackID string
 	}
+
+	// VersionConflictError is a bulk edit in which every track lost the
+	// optimistic lock (expected_version mismatch); the API maps it to 409
+	// with the per-track details in Conflicts.
+	VersionConflictError struct {
+		Conflicts []map[string]interface{}
+	}
 )
 
 func (e *ValidationError) Error() string { return e.Message }
 func (e *NotFoundError) Error() string   { return e.Message }
 func (e *ConflictError) Error() string   { return e.Message }
+
+func (e *VersionConflictError) Error() string {
+	return fmt.Sprintf("%d track(s) were changed by another user; re-apply with the new version", len(e.Conflicts))
+}
 
 // textFields and intFields are the fields a bulk edit may touch.
 var (

@@ -22,6 +22,7 @@ import (
 	"yt-scraper/internal/library"
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/scanner"
+	"yt-scraper/internal/syncconf"
 	"yt-scraper/internal/ytdlp"
 
 	"github.com/gorilla/mux"
@@ -100,10 +101,13 @@ func main() {
 		}
 	}
 
-	// Initialize Services
+	// Initialize Services. The shared tag writer backs the metadata
+	// editor, the scanner's file reads and the conflict resolutions.
 	libService := library.NewService(database, downloadDir)
 	jobManager := jobs.NewManager(database)
+	pyTags := metadata.NewPythonTagWriter()
 	musicScanner := scanner.NewScanner(libService, jobManager, downloadDir)
+	musicScanner.Tags = pyTags
 	downloader := download.NewDownloader(jobManager, musicScanner, downloadDir)
 
 	// Managed yt-dlp binary (T15). The downloader resolves the binary
@@ -117,7 +121,18 @@ func main() {
 		DB:      database,
 		Library: libService,
 		Jobs:    jobManager,
+		Tags:    pyTags,
 	})
+	syncService := syncconf.NewService(libService, jobManager, pyTags)
+
+	// T16 sync bookkeeping at startup: make sure the policy setting row
+	// exists and drop trash entries past the 30-day retention.
+	if err := libService.SeedSyncPolicy(); err != nil {
+		log.Printf("Failed to seed sync policy: %v", err)
+	}
+	if err := syncService.Purge(); err != nil {
+		log.Printf("Failed to purge expired trash entries: %v", err)
+	}
 
 	// Main Router
 	r := mux.NewRouter()
@@ -128,7 +143,7 @@ func main() {
 	if samlCfg.Enabled {
 		authSvc.RegisterSAMLRoutes(apiSub)
 	}
-	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, ytdlpMgr, authSvc.RequireAdmin)
+	api.RegisterRoutes(apiSub, downloader, libService, metaService, jobManager, musicScanner, ytdlpMgr, syncService, authSvc.RequireAdmin)
 
 	// Serve media files
 	r.PathPrefix("/media/").Handler(http.StripPrefix("/media", newMediaHandler(downloadDir)))

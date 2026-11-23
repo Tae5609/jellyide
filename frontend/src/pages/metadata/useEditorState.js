@@ -246,14 +246,30 @@ export function getDiff(state) {
 export const pendingCount = (state) => Object.keys(state.edits).length;
 
 // Group the diff into the PATCH /metadata/tracks body: one entry per track
-// with a `fields` map (null clears the tag).
-export function buildPatchEdits(state) {
+// with a `fields` map (null clears the tag), the track's `expected_version`
+// (the optimistic lock, T16) and — for tracks whose title changed and whose
+// new file name collides — the chosen `on_collision` mode (suffix / skip /
+// replace, default suffix).
+export function buildPatchEdits(state, collisionChoices = {}) {
   const byTrack = {};
   getDiff(state).forEach((r) => {
     if (!byTrack[r.trackId]) {
-      byTrack[r.trackId] = { track_id: r.trackId, fields: {} };
+      const track = state.tracks.find((t) => t.id === r.trackId);
+      byTrack[r.trackId] = {
+        track_id: r.trackId,
+        fields: {},
+        ...(typeof track && typeof track.version === 'number'
+          ? { expected_version: track.version }
+          : {}),
+      };
     }
     byTrack[r.trackId].fields[r.field] = r.to;
+  });
+  Object.values(byTrack).forEach((e) => {
+    const choice = collisionChoices[e.track_id];
+    if (choice && e.fields.title !== undefined) {
+      e.on_collision = choice;
+    }
   });
   return Object.values(byTrack);
 }

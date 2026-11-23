@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   FIELDS,
   INT_MAX,
@@ -6,6 +7,37 @@ import {
   formatDuration,
   originalValue,
 } from './useEditorState';
+
+// SyncChip marks a track whose sync state needs attention (T16): a
+// conflict (changed outside JellyIDE) or a missing file. Clicking it goes
+// to the Conflicts page, where both are resolved.
+function SyncChip({ state, onGo }) {
+  if (state === 'conflict') {
+    return (
+      <button
+        type="button"
+        className="sync-chip conflict-chip"
+        onClick={onGo}
+        title="Changed outside JellyIDE — resolve on the Conflicts page"
+      >
+        ⚠ Conflict
+      </button>
+    );
+  }
+  if (state === 'missing') {
+    return (
+      <button
+        type="button"
+        className="sync-chip missing-chip"
+        onClick={onGo}
+        title="File not found on disk — see the Conflicts page"
+      >
+        Missing
+      </button>
+    );
+  }
+  return null;
+}
 
 const TrashIcon = () => (
   <svg
@@ -101,6 +133,7 @@ export default function TrackGrid({
   onSaveCard,
   onError,
 }) {
+  const navigate = useNavigate();
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [sheetTrackId, setSheetTrackId] = useState(null);
   const [sheetDrafts, setSheetDrafts] = useState({});
@@ -363,7 +396,14 @@ export default function TrackGrid({
                   );
                 })}
                 <td className="td-center-muted">{formatDuration(track.duration)}</td>
-                <td className="td-center">
+                <td className="td-center td-track-actions">
+                  <SyncChip
+                    state={track.state}
+                    onGo={(e) => {
+                      e.stopPropagation();
+                      navigate('/sync');
+                    }}
+                  />
                   <button
                     className="icon-btn"
                     onClick={(e) => {
@@ -401,6 +441,13 @@ export default function TrackGrid({
                 {track.track_number ?? idx + 1} · {formatDuration(track.duration)}
               </span>
               {dirty && <span className="md-dirty-badge">modified</span>}
+              <SyncChip
+                state={track.state}
+                onGo={(e) => {
+                  e.stopPropagation();
+                  navigate('/sync');
+                }}
+              />
               <button
                 className="icon-btn"
                 onClick={(e) => {

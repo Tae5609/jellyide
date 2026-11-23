@@ -19,14 +19,15 @@ import (
 	"yt-scraper/internal/library"
 	"yt-scraper/internal/metadata"
 	"yt-scraper/internal/scanner"
+	"yt-scraper/internal/syncconf"
 	"yt-scraper/internal/ytdlp"
 )
 
 // RegisterRoutes registers all API routes to the provided router.
-// requireAdmin wraps admin-only routes (the yt-dlp admin APIs and the
-// config POST); it is auth.Service.RequireAdmin in production and a
-// pass-through in tests.
-func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service, meta *metadata.Service, jm *jobs.Manager, s *scanner.Scanner, yt *ytdlp.Manager, requireAdmin func(http.Handler) http.Handler) {
+// requireAdmin wraps admin-only routes (the yt-dlp admin APIs, the config
+// POST and the sync policy); it is auth.Service.RequireAdmin in production
+// and a pass-through in tests.
+func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service, meta *metadata.Service, jm *jobs.Manager, s *scanner.Scanner, yt *ytdlp.Manager, sync *syncconf.Service, requireAdmin func(http.Handler) http.Handler) {
 	// Download APIs
 	r.HandleFunc("/info", getInfo(d)).Methods("GET")
 	r.HandleFunc("/queue", queueDownloads(d)).Methods("POST")
@@ -77,6 +78,21 @@ func RegisterRoutes(r *mux.Router, d *download.Downloader, lib *library.Service,
 	r.HandleFunc("/metadata/history/{change_set_id}/revert", revertChangeSet(meta)).Methods("POST")
 	r.HandleFunc("/metadata/lookup/search", lookupSearch(meta)).Methods("GET")
 	r.HandleFunc("/metadata/lookup/release/{mbid}", lookupRelease(meta)).Methods("GET")
+	r.HandleFunc("/metadata/rename-collisions", checkRenameCollisions(meta)).Methods("POST")
+
+	// Sync conflict APIs (T16)
+	r.HandleFunc("/sync/conflicts", getSyncConflicts(sync)).Methods("GET")
+	r.HandleFunc("/sync/summary", getSyncSummary(sync)).Methods("GET")
+	r.HandleFunc("/sync/conflicts/resolve", resolveConflicts(sync)).Methods("POST")
+	r.HandleFunc("/sync/conflicts/resolve-all", resolveAllConflicts(sync)).Methods("POST")
+	r.HandleFunc("/sync/conflicts/{id}/dismiss", dismissConflict(sync)).Methods("POST")
+	r.HandleFunc("/sync/missing", getSyncMissing(sync)).Methods("GET")
+	r.HandleFunc("/sync/missing/{track_id}/relink", relinkMissing(sync)).Methods("POST")
+	r.HandleFunc("/sync/missing/{track_id}", deleteMissing(sync)).Methods("DELETE")
+	r.HandleFunc("/sync/trash", getSyncTrash(sync)).Methods("GET")
+	r.HandleFunc("/sync/trash/{id}/restore", restoreTrash(sync)).Methods("POST")
+	r.Handle("/admin/settings/sync", requireAdmin(getSyncPolicy(sync))).Methods("GET")
+	r.Handle("/admin/settings/sync", requireAdmin(putSyncPolicy(sync))).Methods("PUT")
 }
 
 // maxJSONBody caps the JSON request bodies of the API endpoints (1 MiB).
@@ -459,14 +475,27 @@ func applyMetadata(meta *metadata.Service) http.HandlerFunc {
 }
 
 // writeMetadataError maps the metadata service's typed errors to the API
-// contract: 400 {"error","field","track_id"}, 404, 409 and 500 otherwise.
+// contract: 400 {"error","field","track_id"}, 404, 409 (including the
+// all-tracks-conflicted version lock, which carries the per-track
+// details) and 500 otherwise.
 func writeMetadataError(w http.ResponseWriter, err error) {
 	var (
-		valErr   *metadata.ValidationError
-		notFound *metadata.NotFoundError
-		conflict *metadata.ConflictError
+		valErr          *metadata.ValidationError
+		notFound        *metadata.NotFoundError
+		conflict        *metadata.ConflictError
+		versionConflict *metadata.VersionConflictError
 	)
 	switch {
+	case errors.As(err, &versionConflict):
+		body := map[string]interface{}{
+			"error":     versionConflict.Error(),
+			"conflicts": versionConflict.Conflicts,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		if jsonErr := json.NewEncoder(w).Encode(body); jsonErr != nil {
+			log.Printf("api: writing error response: %v", jsonErr)
+		}
 	case errors.As(err, &valErr):
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

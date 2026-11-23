@@ -6,6 +6,7 @@ package metadata
 import (
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -211,10 +212,15 @@ type PreviewRequest struct {
 
 // PreviewResponse is one track's before/after value for the previewed
 // field (the JSON keys stay old_title/new_title for API compatibility).
+// For title changes it also reports a rename collision: the target file
+// name (sanitized new title plus the current extension) is already taken
+// by another file (T16; the job result repeats it per track).
 type PreviewResponse struct {
-	TrackID  string `json:"track_id"`
-	OldTitle string `json:"old_title"`
-	NewTitle string `json:"new_title"`
+	TrackID       string `json:"track_id"`
+	OldTitle      string `json:"old_title"`
+	NewTitle      string `json:"new_title"`
+	Collision     bool   `json:"collision"`
+	CollisionPath string `json:"collision_path,omitempty"`
 }
 
 // PreviewChanges computes the new value of the selected field for each
@@ -252,13 +258,65 @@ func (s *Service) PreviewChanges(req PreviewRequest) ([]PreviewResponse, error) 
 			}
 		}
 
-		results = append(results, PreviewResponse{
+		resp := PreviewResponse{
 			TrackID:  id,
 			OldTitle: oldValue,
 			NewTitle: strings.TrimSpace(newValue),
-		})
+		}
+		// A title change moves the file to <dir>/<sanitized title><ext>;
+		// report it when that name is already taken by another file.
+		if req.Field == "title" && resp.NewTitle != resp.OldTitle && resp.NewTitle != "" {
+			target := filepath.Join(filepath.Dir(track.Path), sanitizeFilename(resp.NewTitle)+filepath.Ext(track.Path))
+			if target != track.Path {
+				if _, err := os.Stat(target); err == nil {
+					resp.Collision = true
+					resp.CollisionPath = target
+				}
+			}
+		}
+		results = append(results, resp)
 	}
 	return results, nil
+}
+
+// RenameCollisionReport is one title change's rename target for the
+// review dialog, which offers suffix / skip / replace per colliding track.
+type RenameCollisionReport struct {
+	TrackID      string `json:"track_id"`
+	NewTitle     string `json:"new_title"`
+	Collides     bool   `json:"collides"`
+	TargetPath   string `json:"target_path,omitempty"`
+	ExistingName string `json:"existing_name,omitempty"`
+}
+
+// CheckRenameCollisions reports, for every title-bearing edit, whether the
+// target file name is already taken (T16). Unknown tracks and no-op title
+// changes are skipped; the reports come back in request order.
+func (s *Service) CheckRenameCollisions(edits []TrackEdit) ([]RenameCollisionReport, error) {
+	reports := []RenameCollisionReport{}
+	for _, e := range edits {
+		title, ok := e.Fields["title"].(string)
+		if !ok || strings.TrimSpace(title) == "" {
+			continue
+		}
+		track, err := s.lib.GetTrack(e.TrackID)
+		if err != nil {
+			continue
+		}
+		if title == track.Title {
+			continue
+		}
+		target := filepath.Join(filepath.Dir(track.Path), sanitizeFilename(title)+filepath.Ext(track.Path))
+		report := RenameCollisionReport{TrackID: e.TrackID, NewTitle: title, TargetPath: target}
+		if target != track.Path {
+			if _, err := os.Stat(target); err == nil {
+				report.Collides = true
+				report.ExistingName = filepath.Base(target)
+			}
+		}
+		reports = append(reports, report)
+	}
+	return reports, nil
 }
 
 // trackFieldValue returns the current value of a track field.
@@ -327,16 +385,22 @@ func (s *Service) ApplyChanges(previews []PreviewResponse) error {
 					log.Printf("Metadata: name for %q taken; track %s file renamed to %q", p.NewTitle, p.TrackID, filepath.Base(finalPath))
 				}
 				// 3. Update Database with the new path AND new title
-				_, err = s.db.Exec("UPDATE tracks SET title = ?, path = ? WHERE id = ?", p.NewTitle, finalPath, p.TrackID)
+				// (version bump: the row data changed, T16).
+				_, err = s.db.Exec("UPDATE tracks SET title = ?, path = ?, version = version + 1 WHERE id = ?", p.NewTitle, finalPath, p.TrackID)
 				if err != nil {
 					log.Printf("Metadata: Failed to update DB for track %s: %v", p.TrackID, err)
+				} else {
+					s.refreshSyncFingerprint(p.TrackID, finalPath)
 				}
 			}
 		} else {
-			// Just update title in DB
-			_, err = s.db.Exec("UPDATE tracks SET title = ? WHERE id = ?", p.NewTitle, p.TrackID)
+			// Just update title in DB (version bump: the row data changed,
+			// T16).
+			_, err = s.db.Exec("UPDATE tracks SET title = ?, version = version + 1 WHERE id = ?", p.NewTitle, p.TrackID)
 			if err != nil {
 				log.Printf("Metadata: Failed to update DB title for track %s: %v", p.TrackID, err)
+			} else {
+				s.refreshSyncFingerprint(p.TrackID, track.Path)
 			}
 		}
 

@@ -120,7 +120,107 @@ export default function Settings() {
 
       {isAdmin && <RegistrationCard />}
 
+      {isAdmin && <SyncPolicyCard />}
+
       {user && user.provider === 'local' && <ChangePasswordCard />}
+    </div>
+  );
+}
+
+const SYNC_POLICIES = [
+  {
+    value: 'ask',
+    label: 'Ask (default)',
+    hint: 'Changes made outside JellyIDE are listed on the Conflicts page and nothing is overwritten.',
+  },
+  {
+    value: 'file_wins',
+    label: 'File wins',
+    hint: 'The file is the source of truth: the database follows the file tags automatically.',
+  },
+  {
+    value: 'db_wins',
+    label: 'JellyIDE wins',
+    hint: 'The database is the source of truth: file tags are rewritten to match JellyIDE.',
+  },
+];
+
+// Self-contained admin card for the sync conflict policy
+// (GET/PUT /admin/settings/sync). It owns its own state so other cards
+// (including ytdlp settings on other branches) are untouched.
+function SyncPolicyCard() {
+  const [policy, setPolicy] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => {
+    apiFetch('/admin/settings/sync')
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (data && data.policy) setPolicy(data.policy);
+      })
+      .catch(() => {
+        // A failed load leaves the card empty rather than broken.
+      });
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await apiFetch('/admin/settings/sync', {
+        method: 'PUT',
+        body: JSON.stringify({ policy })
+      });
+      if (res.ok) {
+        setMsg({ type: 'success', text: 'Sync policy updated.' });
+      } else {
+        let text = 'Failed to update the sync policy.';
+        try {
+          const data = await res.json();
+          if (data && data.error) text = data.error;
+        } catch (err) {
+          // Non-JSON error body; keep the generic message.
+        }
+        setMsg({ type: 'error', text });
+      }
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="card settings-card">
+      <h3 className="settings-card-title">Sync conflicts</h3>
+      {msg && <p className={`settings-msg ${msg.type}`}>{msg.text}</p>}
+      {policy !== null && (
+        <>
+          <div className="registration-options">
+            {SYNC_POLICIES.map(o => (
+              <label
+                key={o.value}
+                className={`registration-option ${policy === o.value ? 'selected' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="sync_policy"
+                  value={o.value}
+                  checked={policy === o.value}
+                  onChange={() => setPolicy(o.value)}
+                />
+                <span className="registration-option-body">
+                  <span className="registration-option-label">{o.label}</span>
+                  <span className="registration-option-hint">{o.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <button className="btn-primary settings-save" onClick={save} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Sync Policy'}
+          </button>
+        </>
+      )}
     </div>
   );
 }
