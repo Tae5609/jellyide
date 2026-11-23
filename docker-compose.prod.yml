@@ -26,7 +26,7 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       # Optional: unset means first-run setup — on an empty database the
-      # server starts the setup wizard (or `admin_cli` bootstraps the
+      # server starts the setup wizard (or the admin CLI bootstraps the
       # account). Set it to pre-create the admin instead.
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
