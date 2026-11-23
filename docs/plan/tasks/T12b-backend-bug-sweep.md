@@ -13,7 +13,7 @@ Source: T12-review-r2 (APPROVE) NOTES — per inbox P1, T12 ships with its brief
 ## Scope rules
 - ONLY the two items above (+ their tests + BUGS.md entries). No other refactors.
 - If either item turns out to be already handled on main (T12 or a later merge), report it and tick/annotate the BUGS.md line instead of coding.
-- BUGS.md: add the two entries (or tick the existing ones if present — check first; they may exist as reviewer notes) in their fix commits.
+- BUGS.md: add the two entries (or tick the existing ones if present — check first; they may exist as reviewer notes) in their fix commits. Per T12-review-r3 finding 2, these two deferred items MUST exist as open `- [ ]` BUGS.md entries (CONVENTIONS: out-of-scope bugs go there) — if you tick rather than add, the entry must first be present as `- [ ]` in the same commit, then ticked.
 
 ## Gates
 All from CONVENTIONS.md: gofmt, go vet, golangci-lint (0 issues, must appear in report), `go test -race -count=1 ./...`, CI=true npm test, CI=true npm run build. If `frontend/package.json`/lock is touched: verify with `npx -y npm@10 ci --dry-run` (CI runs node 20 / npm 10).
